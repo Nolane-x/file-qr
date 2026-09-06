@@ -62,14 +62,21 @@ jobs:
         run: |
           set -euo pipefail
           health=""
-          for attempt in 1 2 3 4 5 6; do
-            if health="$(curl --fail --silent --show-error --max-time 10 "$WORKER_URL/health")"; then
+          for attempt in $(seq 1 15); do
+            candidate="$(curl --fail --silent --show-error --max-time 10 "$WORKER_URL/health" || true)"
+            if node -e 'try { const x=JSON.parse(process.argv[1]); process.exit(x.ok === true && x.service === "file-qr-signaling" ? 0 : 1); } catch { process.exit(1); }' "$candidate"; then
+              health="$candidate"
               break
             fi
+            echo "Waiting for deployed worker version ($attempt/15)..."
             sleep 2
           done
+
+          if [ -z "$health" ]; then
+            echo "::error::Deployed workers.dev endpoint did not converge to file-qr-signaling"
+            exit 1
+          fi
           echo "$health"
-          node -e 'const x=JSON.parse(process.argv[1]); if (x.ok !== true || x.service !== "file-qr-signaling") process.exit(1)' "$health"
 
           session="$(curl --fail --silent --show-error --max-time 10 -X POST "$WORKER_URL/v1/sessions")"
           echo "$session"
