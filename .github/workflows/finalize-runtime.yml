@@ -2,7 +2,7 @@ name: Finalize runtime hardening
 
 on:
   push:
-    branches: [feat/v0.1-foundation]
+    branches: ['feat/v0.1-foundation']
 
 permissions:
   contents: write
@@ -14,11 +14,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-
       - name: Apply verified runtime patches
         shell: bash
         run: |
@@ -34,15 +32,8 @@ jobs:
 
           web_test = Path('tests/structure/web-ui.test.mjs')
           s = web_test.read_text()
-          block = """
-
-test('web signaling routes early remote ICE candidates through the candidate buffer', () => {
-  const source = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
-  assert.ok(source.includes('await candidateBuffer.add(message.candidate)'));
-  assert.ok(!source.includes('await peer.addIceCandidate(message.candidate)'));
-});
-"""
           assert 'routes early remote ICE candidates' not in s
+          block = "\n\ntest('web signaling routes early remote ICE candidates through the candidate buffer', () => {\n  const source = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');\n  assert.ok(source.includes('await candidateBuffer.add(message.candidate)'));\n  assert.ok(!source.includes('await peer.addIceCandidate(message.candidate)'));\n});\n"
           web_test.write_text(s.rstrip() + block + '\n')
 
           native = Path('apps/native/src/main.js')
@@ -51,58 +42,29 @@ test('web signaling routes early remote ICE candidates through the candidate buf
           assert s.count(anchor) == 1
           s = s.replace(anchor, anchor + "\nconst OPTICAL_MAX_BYTES = 8 * 1024 * 1024;")
 
-          old = """async function startOpticalSend(file) {
-  stopOptical();
-  stopButton.hidden = false;
-  status.textContent = `Preparing ${file.name}…`;"""
-          new = """async function startOpticalSend(file) {
-  stopOptical();
-  stopButton.hidden = false;
-  if (file.size > OPTICAL_MAX_BYTES) {
-    status.textContent = 'QR Stream v0.1 supports files up to 8 MB; use Network mode for larger files.';
-    progress.textContent = 'Too large';
-    bar.style.width = '0%';
-    stopButton.hidden = true;
-    return;
-  }
-  status.textContent = `Preparing ${file.name}…`;"""
+          old = "async function startOpticalSend(file) {\n  stopOptical();\n  stopButton.hidden = false;\n  status.textContent = `Preparing ${file.name}…`;"
+          new = "async function startOpticalSend(file) {\n  stopOptical();\n  stopButton.hidden = false;\n  if (file.size > OPTICAL_MAX_BYTES) {\n    status.textContent = 'QR Stream v0.1 supports files up to 8 MB; use Network mode for larger files.';\n    progress.textContent = 'Too large';\n    bar.style.width = '0%';\n    stopButton.hidden = true;\n    return;\n  }\n  status.textContent = `Preparing ${file.name}…`;"
           assert s.count(old) == 1
           s = s.replace(old, new)
 
-          old = """  let index = 0;
-  let stopped = false;"""
-          new = """  let index = 0;
-  let loop = 1;
-  let stopped = false;"""
+          old = "  let index = 0;\n  let stopped = false;"
+          new = "  let index = 0;\n  let loop = 1;\n  let stopped = false;"
           assert s.count(old) == 1
           s = s.replace(old, new)
 
-          old = """    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${Math.floor(index / frames.length) + 1}`);
-    index = (index + 1) % frames.length;"""
-          new = """    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${loop}`);
-    index += 1;
-    if (index >= frames.length) { index = 0; loop += 1; }"""
+          old = "    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${Math.floor(index / frames.length) + 1}`);\n    index = (index + 1) % frames.length;"
+          new = "    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${loop}`);\n    index += 1;\n    if (index >= frames.length) { index = 0; loop += 1; }"
           assert s.count(old) == 1
           native.write_text(s.replace(old, new))
 
           native_test = Path('tests/structure/native-runtime.test.mjs')
           s = native_test.read_text()
-          block = """
-
-test('optical v0.1 rejects files that cannot complete a useful loop inside the 10-minute window', () => {
-  const js = fs.readFileSync(new URL('../../apps/native/src/main.js', import.meta.url), 'utf8');
-  assert.ok(js.includes('const OPTICAL_MAX_BYTES = 8 * 1024 * 1024'));
-  assert.ok(js.indexOf('file.size > OPTICAL_MAX_BYTES') < js.indexOf('file.arrayBuffer()'));
-  assert.ok(js.includes('use Network mode for larger files'));
-});
-"""
           assert 'cannot complete a useful loop' not in s
+          block = "\n\ntest('optical v0.1 rejects files that cannot complete a useful loop inside the 10-minute window', () => {\n  const js = fs.readFileSync(new URL('../../apps/native/src/main.js', import.meta.url), 'utf8');\n  assert.ok(js.includes('const OPTICAL_MAX_BYTES = 8 * 1024 * 1024'));\n  assert.ok(js.indexOf('file.size > OPTICAL_MAX_BYTES') < js.indexOf('file.arrayBuffer()'));\n  assert.ok(js.includes('use Network mode for larger files'));\n});\n"
           native_test.write_text(s.rstrip() + block + '\n')
           PY
-
       - name: Verify final patch before commit
         run: npm test
-
       - name: Commit final runtime hardening and remove one-shot workflow
         shell: bash
         run: |
