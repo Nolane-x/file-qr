@@ -141,7 +141,7 @@ async function handleRemoteSignal(peer, socket, event, role, candidateBuffer) {
   let message;
   try { message = JSON.parse(event.data); } catch { return; }
   if (message.type === 'candidate' && message.candidate) {
-    try { await peer.addIceCandidate(message.candidate); } catch { /* candidate may arrive after closure */ }
+    try { await candidateBuffer.add(message.candidate); } catch { /* candidate may arrive after closure */ }
     return;
   }
   if (message.type === 'description' && message.description) {

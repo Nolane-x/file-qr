@@ -15,3 +15,9 @@ test('web state copy includes every release-critical state', () => {
     assert.ok(js.includes(state), `missing state ${state}`);
   }
 });
+
+test('web signaling buffers remote ICE until a remote description exists', () => {
+  const source = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('await candidateBuffer.add(message.candidate)'));
+  assert.ok(!source.includes('await peer.addIceCandidate(message.candidate)'));
+});

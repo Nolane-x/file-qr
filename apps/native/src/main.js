@@ -20,6 +20,7 @@ const bar = document.querySelector('[data-optical-bar]');
 const stopButton = document.querySelector('[data-optical-stop]');
 
 let opticalSession = { stop: null, timer: null, camera: null, loop: null };
+const OPTICAL_MAX_BYTES = 8 * 1024 * 1024;
 
 function setMode(mode) {
   const optical = mode === 'optical';
@@ -57,11 +58,19 @@ function stopOptical() {
 async function startOpticalSend(file) {
   stopOptical();
   stopButton.hidden = false;
+  if (file.size > OPTICAL_MAX_BYTES) {
+    status.textContent = 'QR Stream v0.1 supports files up to 8 MB; use Network mode for larger files.';
+    progress.textContent = 'Too large';
+    bar.style.width = '0%';
+    stopButton.hidden = true;
+    return;
+  }
   status.textContent = `Preparing ${file.name}…`;
   const bytes = new Uint8Array(await file.arrayBuffer());
   const envelope = encodeFileEnvelope({ name: file.name, type: file.type }, bytes);
   const frames = encodeOpticalFrames(envelope, { streamId: randomStreamId(), payloadBytes: 900 });
   let index = 0;
+  let loop = 1;
   let stopped = false;
   const startedAt = Date.now();
   const maxAgeMs = 10 * 60 * 1000;
@@ -76,8 +85,9 @@ async function startOpticalSend(file) {
     }
     const frame = frames[index];
     qr.innerHTML = encodeQR(frame, 'svg', { ecc: 'low', border: 3, optimize: true });
-    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${Math.floor(index / frames.length) + 1}`);
-    index = (index + 1) % frames.length;
+    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${loop}`);
+    index += 1;
+    if (index >= frames.length) { index = 0; loop += 1; }
     opticalSession.timer = window.setTimeout(draw, 55);
   };
   opticalSession.stop = () => { stopped = true; };
