@@ -31,10 +31,28 @@
 
           <div class="receive-row">
             <span class="receive-label">Receive something?</span>
-            <form class="receive-form" data-receive-form>
-              <input data-code-input inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="11" placeholder="ABCDE-FGHJK" aria-label="Receive code" />
-              <button type="submit" aria-label="Receive file"><span>Receive</span><span aria-hidden="true">→</span></button>
-            </form>
+            <div class="receive-tools">
+              <form class="receive-form" data-receive-form>
+                <input data-code-input inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="11" placeholder="ABCDE-FGHJK" aria-label="Receive code" />
+                <button type="submit" aria-label="Receive file"><span>Receive</span><span aria-hidden="true">→</span></button>
+              </form>
+              <div class="receive-actions" aria-label="Receive shortcuts">
+                <button type="button" class="utility-button" data-paste-code>Paste</button>
+                <button type="button" class="utility-button" data-scan-qr>Scan QR</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="scanner-panel" data-scanner hidden>
+            <div class="scanner-viewport">
+              <video data-scanner-video playsinline muted aria-label="Camera preview"></video>
+              <canvas data-scanner-overlay aria-hidden="true"></canvas>
+              <span class="scanner-frame" aria-hidden="true"></span>
+            </div>
+            <div class="scanner-copy">
+              <span>Point the camera at a File QR receive code.</span>
+              <button type="button" class="utility-button" data-scanner-cancel>Cancel scan</button>
+            </div>
           </div>
         </div>
 
@@ -53,7 +71,10 @@
           <div class="progress-wrap" data-progress-wrap hidden>
             <div class="progress-meta"><span data-progress-label>Connecting</span><span data-progress-value>0%</span></div>
             <div class="progress-track"><i data-progress-bar></i></div>
-            <div class="progress-foot"><span data-rate>Secure P2P</span><span data-transfer-size></span></div>
+            <div class="progress-foot">
+              <span class="progress-transport"><span data-rate>Secure P2P</span><span data-eta>Direct P2P</span></span>
+              <span data-transfer-size></span>
+            </div>
           </div>
           <div class="session-actions">
             <button type="button" class="secondary" data-copy-link>Copy link</button>
