@@ -15,14 +15,14 @@ File QR is a deliberately small file-transfer product for **Windows and Android*
 ## Repository map
 
 ```text
-apps/web/                 Vite web client for GitHub Pages
+apps/web/                 Vite web client for Cloudflare Workers Static Assets
 apps/native/              Tauri 2 shell for Windows + Android
 packages/core/            transport-neutral protocol primitives
 services/signaling/       Cloudflare Worker + Durable Object rendezvous
 tests/                    protocol + structural release gates
 docs/architecture/        wire-format and security notes
 docs/superpowers/         approved design + implementation plan
-.github/workflows/        CI, Pages, signaling and native builds
+.github/workflows/        CI, web deploy, signaling and native builds
 ```
 
 ## Development
@@ -67,11 +67,19 @@ For credentials, the workflow accepts repository secret `CLOUDFLARE_API_TOKEN` o
 
 ### 2. Web
 
-Repository variable `SIGNALING_ORIGIN` may override the rendezvous origin. If it is not set, the Pages workflow falls back to the verified production Worker above. Enable GitHub Pages with **GitHub Actions** as its source. Push to `main`; `.github/workflows/pages.yml` builds and deploys `apps/web/dist`.
+The production static website is deployed as a Cloudflare Workers Static Assets project named `file-qr-web`:
+
+```text
+https://file-qr-web.nolane-file.workers.dev
+```
+
+Repository variable `SIGNALING_ORIGIN` may override the rendezvous origin. If it is not set, the web build falls back to the verified signaling Worker above. Pushes to `main` run `.github/workflows/pages.yml`, which builds `apps/web/dist`, deploys it with `apps/web/wrangler.jsonc`, and smoke-tests the live `workers.dev` URL. The workflow uses the same Cloudflare credential aliases as signaling and does not require GitHub Pages repository configuration.
 
 ### 3. Native downloads
 
-`.github/workflows/native.yml` builds an NSIS installer on Windows and an installable Android preview APK. The Android job initializes the Tauri project through the repository wrapper, verifies `android.permission.CAMERA` plus an optional camera feature declaration in the generated manifest, and only then builds the APK. Tags matching `v*` publish release assets with stable names used by the website download buttons:
+`.github/workflows/native.yml` builds an NSIS installer on Windows and an installable Android preview APK. The Android job initializes the Tauri project through the repository wrapper, verifies `android.permission.CAMERA` plus an optional camera feature declaration in the generated manifest, and only then builds the APK.
+
+On a push to `main`, the release job reads the root `package.json` version and creates `v<version>` only when that release does not already exist. It reuses the Windows and Android artifacts from the same verified workflow run and publishes the stable filenames used by the website download buttons:
 
 ```text
 FileQR-Windows-x64-setup.exe
