@@ -12,10 +12,12 @@ test('pages workflow deploys built web artifact with current Pages actions', () 
   assert.ok(yml.includes('apps/web/dist'));
 });
 
-test('native workflow contains Windows and Android build jobs', () => {
+test('native workflow contains Windows and permission-aware Android build jobs', () => {
   const yml = read('../../.github/workflows/native.yml');
   assert.ok(yml.includes('windows-latest'));
   assert.ok(yml.includes('tauri build'));
-  assert.ok(yml.includes('tauri android init'));
+  assert.ok(yml.includes('npm run android:init'));
+  assert.ok(yml.includes('android.permission.CAMERA'));
+  assert.ok(yml.includes('android.hardware.camera.any'));
   assert.ok(yml.includes('tauri android build'));
 });
