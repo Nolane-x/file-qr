@@ -1,0 +1,115 @@
+name: Finalize runtime hardening
+
+on:
+  push:
+    branches: [feat/v0.1-foundation]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Apply verified runtime patches
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          web = Path('apps/web/src/main.js')
+          s = web.read_text()
+          old = "try { await peer.addIceCandidate(message.candidate); } catch { /* candidate may arrive after closure */ }"
+          new = "try { await candidateBuffer.add(message.candidate); } catch { /* candidate may arrive after closure */ }"
+          assert s.count(old) == 1, 'expected exactly one direct remote ICE insertion'
+          web.write_text(s.replace(old, new))
+
+          web_test = Path('tests/structure/web-ui.test.mjs')
+          s = web_test.read_text()
+          block = """
+
+test('web signaling routes early remote ICE candidates through the candidate buffer', () => {
+  const source = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('await candidateBuffer.add(message.candidate)'));
+  assert.ok(!source.includes('await peer.addIceCandidate(message.candidate)'));
+});
+"""
+          assert 'routes early remote ICE candidates' not in s
+          web_test.write_text(s.rstrip() + block + '\n')
+
+          native = Path('apps/native/src/main.js')
+          s = native.read_text()
+          anchor = "let opticalSession = { stop: null, timer: null, camera: null, loop: null };"
+          assert s.count(anchor) == 1
+          s = s.replace(anchor, anchor + "\nconst OPTICAL_MAX_BYTES = 8 * 1024 * 1024;")
+
+          old = """async function startOpticalSend(file) {
+  stopOptical();
+  stopButton.hidden = false;
+  status.textContent = `Preparing ${file.name}…`;"""
+          new = """async function startOpticalSend(file) {
+  stopOptical();
+  stopButton.hidden = false;
+  if (file.size > OPTICAL_MAX_BYTES) {
+    status.textContent = 'QR Stream v0.1 supports files up to 8 MB; use Network mode for larger files.';
+    progress.textContent = 'Too large';
+    bar.style.width = '0%';
+    stopButton.hidden = true;
+    return;
+  }
+  status.textContent = `Preparing ${file.name}…`;"""
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+
+          old = """  let index = 0;
+  let stopped = false;"""
+          new = """  let index = 0;
+  let loop = 1;
+  let stopped = false;"""
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+
+          old = """    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${Math.floor(index / frames.length) + 1}`);
+    index = (index + 1) % frames.length;"""
+          new = """    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${loop}`);
+    index += 1;
+    if (index >= frames.length) { index = 0; loop += 1; }"""
+          assert s.count(old) == 1
+          native.write_text(s.replace(old, new))
+
+          native_test = Path('tests/structure/native-runtime.test.mjs')
+          s = native_test.read_text()
+          block = """
+
+test('optical v0.1 rejects files that cannot complete a useful loop inside the 10-minute window', () => {
+  const js = fs.readFileSync(new URL('../../apps/native/src/main.js', import.meta.url), 'utf8');
+  assert.ok(js.includes('const OPTICAL_MAX_BYTES = 8 * 1024 * 1024'));
+  assert.ok(js.indexOf('file.size > OPTICAL_MAX_BYTES') < js.indexOf('file.arrayBuffer()'));
+  assert.ok(js.includes('use Network mode for larger files'));
+});
+"""
+          assert 'cannot complete a useful loop' not in s
+          native_test.write_text(s.rstrip() + block + '\n')
+          PY
+
+      - name: Verify final patch before commit
+        run: npm test
+
+      - name: Commit final runtime hardening and remove one-shot workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/finalize-runtime.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: harden WebRTC ICE and optical runtime"
+          git push origin HEAD:feat/v0.1-foundation
