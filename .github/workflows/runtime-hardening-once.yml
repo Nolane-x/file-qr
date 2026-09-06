@@ -1,0 +1,103 @@
+name: Runtime Hardening Once
+
+on:
+  push:
+    branches: ['feat/v0.1-foundation']
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: github.event.head_commit.message == 'chore: run runtime hardening once'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm install
+
+      - name: Add regression tests
+        shell: bash
+        run: |
+          cat >> tests/structure/web-ui.test.mjs <<'EOF'
+
+          test('web signaling buffers remote ICE until a remote description exists', () => {
+            const source = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
+            assert.ok(source.includes('await candidateBuffer.add(message.candidate)'));
+            assert.ok(!source.includes('await peer.addIceCandidate(message.candidate)'));
+          });
+          EOF
+
+          cat >> tests/structure/native-runtime.test.mjs <<'EOF'
+
+          test('optical v0.1 rejects oversized files before reading them into memory', () => {
+            const js = fs.readFileSync(new URL('../../apps/native/src/main.js', import.meta.url), 'utf8');
+            assert.ok(js.includes('const OPTICAL_MAX_BYTES = 8 * 1024 * 1024'));
+            assert.ok(js.includes('file.size > OPTICAL_MAX_BYTES'));
+            assert.ok(js.indexOf('file.size > OPTICAL_MAX_BYTES') < js.indexOf('file.arrayBuffer()'));
+            assert.ok(js.includes('use Network mode for larger files'));
+          });
+          EOF
+
+      - name: Confirm RED
+        shell: bash
+        run: |
+          if node --test tests/structure/web-ui.test.mjs tests/structure/native-runtime.test.mjs; then
+            echo '::error::Regression tests unexpectedly passed before the fix'
+            exit 1
+          fi
+          echo 'RED confirmed: runtime regressions are reproduced.'
+
+      - name: Apply runtime fixes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          web = Path('apps/web/src/main.js')
+          s = web.read_text()
+          old = "try { await peer.addIceCandidate(message.candidate); } catch { /* candidate may arrive after closure */ }"
+          new = "try { await candidateBuffer.add(message.candidate); } catch { /* candidate may arrive after closure */ }"
+          assert s.count(old) == 1
+          web.write_text(s.replace(old, new))
+
+          native = Path('apps/native/src/main.js')
+          s = native.read_text()
+          anchor = "let opticalSession = { stop: null, timer: null, camera: null, loop: null };"
+          assert s.count(anchor) == 1
+          s = s.replace(anchor, anchor + "\nconst OPTICAL_MAX_BYTES = 8 * 1024 * 1024;")
+
+          old = "async function startOpticalSend(file) {\n  stopOptical();\n  stopButton.hidden = false;\n  status.textContent = `Preparing ${file.name}…`;"
+          new = "async function startOpticalSend(file) {\n  stopOptical();\n  stopButton.hidden = false;\n  if (file.size > OPTICAL_MAX_BYTES) {\n    status.textContent = 'QR Stream v0.1 supports files up to 8 MB; use Network mode for larger files.';\n    progress.textContent = 'Too large';\n    bar.style.width = '0%';\n    stopButton.hidden = true;\n    return;\n  }\n  status.textContent = `Preparing ${file.name}…`;"
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+
+          old = "  let index = 0;\n  let stopped = false;"
+          new = "  let index = 0;\n  let loop = 1;\n  let stopped = false;"
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+
+          old = "    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${Math.floor(index / frames.length) + 1}`);\n    index = (index + 1) % frames.length;"
+          new = "    setOpticalProgress(index + 1, frames.length, `Broadcasting ${file.name} · loop ${loop}`);\n    index += 1;\n    if (index >= frames.length) { index = 0; loop += 1; }"
+          assert s.count(old) == 1
+          native.write_text(s.replace(old, new))
+          PY
+
+      - name: Confirm GREEN
+        run: npm test
+
+      - name: Commit hardened runtime and remove one-shot workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/runtime-hardening-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: harden WebRTC ICE and optical runtime'
+          git push origin HEAD:feat/v0.1-foundation
