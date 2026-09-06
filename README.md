@@ -49,7 +49,7 @@ Run the native UI during development:
 VITE_SIGNALING_ORIGIN=https://your-worker.example.workers.dev npm --workspace @file-qr/native run tauri -- dev
 ```
 
-Tauri native builds additionally require Rust. Android builds require the Android SDK/NDK and Rust Android targets.
+Tauri native builds additionally require Rust. Android builds require the Android SDK/NDK and Rust Android targets. Use `npm --workspace @file-qr/native run android:init` to initialize the generated Android project; this command also injects the `CAMERA` manifest permission required by QR Stream receive.
 
 ## Deploy
 
@@ -71,7 +71,7 @@ Repository variable `SIGNALING_ORIGIN` may override the rendezvous origin. If it
 
 ### 3. Native downloads
 
-`.github/workflows/native.yml` builds an NSIS installer on Windows and an installable Android preview APK. Tags matching `v*` publish release assets with stable names used by the website download buttons:
+`.github/workflows/native.yml` builds an NSIS installer on Windows and an installable Android preview APK. The Android job initializes the Tauri project through the repository wrapper, verifies `android.permission.CAMERA` plus an optional camera feature declaration in the generated manifest, and only then builds the APK. Tags matching `v*` publish release assets with stable names used by the website download buttons:
 
 ```text
 FileQR-Windows-x64-setup.exe
@@ -84,7 +84,7 @@ The Android v0.1 artifact is intentionally a **debug-signed preview APK**. Repla
 
 The first optical format is intentionally conservative and falsifiable. It loops independent QR frames containing sequence number, total count, CRC32, and Base64URL payload. The receiver deduplicates frames and reconstructs only when all frames are present.
 
-QR Stream v0.1 caps optical send at **8 MB** before reading the file into memory. Larger files are directed to Network mode. This is a baseline for measurement—not a claim that QR beats Wi-Fi. The optical protocol is versioned so later releases can add fountain/FEC blocks and denser visual modulation without breaking the online protocol. See [`docs/architecture/PROTOCOL.md`](docs/architecture/PROTOCOL.md).
+QR Stream v0.1 caps optical send at **8 MB** before reading the file into memory. Larger files are directed to Network mode. Android optical receive declares camera access explicitly; if camera access is denied or unavailable, users can remain in Network mode. This is a baseline for measurement—not a claim that QR beats Wi-Fi. The optical protocol is versioned so later releases can add fountain/FEC blocks and denser visual modulation without breaking the online protocol. See [`docs/architecture/PROTOCOL.md`](docs/architecture/PROTOCOL.md).
 
 ## Nolane UI Intelligence
 
