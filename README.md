@@ -55,11 +55,19 @@ Tauri native builds additionally require Rust. Android builds require the Androi
 
 ### 1. Signaling
 
-Create repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then run the **Deploy Signaling** workflow. The Durable Object stores only ephemeral rendezvous state and expires sessions after 600 seconds.
+The verified production rendezvous is:
+
+```text
+https://file-qr-signaling.nolane-file.workers.dev
+```
+
+`GET /health` must return `{"ok":true,"service":"file-qr-signaling","ttlMs":600000}`. The deployment smoke test also creates a real ephemeral session through `POST /v1/sessions`, so a green **Deploy Signaling** run verifies the Durable Object binding rather than only checking that the Worker uploaded.
+
+For credentials, the workflow accepts repository secret `CLOUDFLARE_API_TOKEN` or the compatibility alias `CLOUDFLARE`, plus `CLOUDFLARE_ACCOUNT_ID` as either a repository secret or repository variable. Run **Deploy Signaling** manually when the Worker changes. The Durable Object stores only ephemeral rendezvous state and expires sessions after 600 seconds.
 
 ### 2. Web
 
-Set repository variable `SIGNALING_ORIGIN` to the Worker origin. Enable GitHub Pages with **GitHub Actions** as its source. Push to `main`; `.github/workflows/pages.yml` builds and deploys `apps/web/dist`.
+Repository variable `SIGNALING_ORIGIN` may override the rendezvous origin. If it is not set, the Pages workflow falls back to the verified production Worker above. Enable GitHub Pages with **GitHub Actions** as its source. Push to `main`; `.github/workflows/pages.yml` builds and deploys `apps/web/dist`.
 
 ### 3. Native downloads
 
@@ -76,7 +84,7 @@ The Android v0.1 artifact is intentionally a **debug-signed preview APK**. Repla
 
 The first optical format is intentionally conservative and falsifiable. It loops independent QR frames containing sequence number, total count, CRC32, and Base64URL payload. The receiver deduplicates frames and reconstructs only when all frames are present.
 
-This is a baseline for measurement—not a claim that QR beats Wi-Fi. Large files should use the network path. The optical protocol is versioned so later releases can add fountain/FEC blocks and denser visual modulation without breaking the online protocol. See [`docs/architecture/PROTOCOL.md`](docs/architecture/PROTOCOL.md).
+QR Stream v0.1 caps optical send at **8 MB** before reading the file into memory. Larger files are directed to Network mode. This is a baseline for measurement—not a claim that QR beats Wi-Fi. The optical protocol is versioned so later releases can add fountain/FEC blocks and denser visual modulation without breaking the online protocol. See [`docs/architecture/PROTOCOL.md`](docs/architecture/PROTOCOL.md).
 
 ## Nolane UI Intelligence
 
