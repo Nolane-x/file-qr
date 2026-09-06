@@ -1,1 +1,0 @@
-Temporary trigger for retrying the File QR signaling deployment on the current branch head.
