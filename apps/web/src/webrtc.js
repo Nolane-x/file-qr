@@ -1,6 +1,13 @@
 import { chunkRanges, encodeControlMessage, decodeControlMessage, DEFAULT_CHUNK_SIZE } from '../../../packages/core/transfer.js';
 
-export const DEFAULT_ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+export function defaultIceServers() {
+  return [
+    { urls: ['stun:stun.cloudflare.com:3478'] },
+    { urls: ['stun:stun.l.google.com:19302'] },
+  ];
+}
+
+export const DEFAULT_ICE_SERVERS = defaultIceServers();
 
 export function waitForBufferedAmountLow(channel, threshold) {
   if (channel.readyState !== 'open') return Promise.reject(new Error('Data channel is not open'));
@@ -48,8 +55,8 @@ export async function streamFileOverChannel(file, channel, options = {}) {
   channel.send(encodeControlMessage('complete', { size: file.size }));
 }
 
-export function createPeerConnection(options = {}) {
-  return new RTCPeerConnection({ iceServers: options.iceServers ?? DEFAULT_ICE_SERVERS });
+export function createPeerConnection({ iceServers = defaultIceServers() } = {}) {
+  return new RTCPeerConnection({ iceServers });
 }
 
 export function createTransferChannel(peer) {

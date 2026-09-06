@@ -41,7 +41,7 @@ jobs:
       - name: Smoke test production website
         shell: bash
         run: |
-          endpoint='https://file-qr-web.nolane-file.workers.dev/'
+          endpoint='https://fileqr.nolane-file.workers.dev/'
           for attempt in {1..20}; do
             body=$(curl -fsS "$endpoint" || true)
             if printf '%s' "$body" | grep -q '<title>File QR'; then

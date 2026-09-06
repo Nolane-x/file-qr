@@ -40,14 +40,24 @@ h1 { font-size: clamp(64px, 9vw, 138px); line-height: .86; letter-spacing: -.075
 .drop-icon { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--accent); font-size: 23px; margin-bottom: 8px; }
 .dropzone strong { font-size: 22px; letter-spacing: -.03em; }
 .dropzone span:last-child { color: var(--muted); font-size: 13px; }
-.receive-row { display: grid; grid-template-columns: 160px 1fr; align-items: center; gap: 22px; margin-top: 22px; }
-.receive-label { color: var(--muted); font-size: 13px; }
+.receive-row { display: grid; grid-template-columns: 160px 1fr; align-items: start; gap: 22px; margin-top: 22px; }
+.receive-label { color: var(--muted); font-size: 13px; padding-top: 22px; }
+.receive-tools { display: grid; gap: 10px; min-width: 0; }
 .receive-form { height: 58px; display: flex; border-bottom: 1px solid rgba(255,255,255,.25); }
 .receive-form:focus-within { border-color: var(--accent); }
 .receive-form input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-weight: 710; letter-spacing: .16em; text-transform: uppercase; }
 .receive-form input::placeholder { color: #555b56; }
 .receive-form button { border: 0; background: none; cursor: pointer; display: flex; gap: 18px; align-items: center; color: var(--muted); }
 .receive-form button:hover { color: var(--accent); }
+.receive-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.utility-button { min-height: 34px; padding: 0 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
+.utility-button:hover, .utility-button:focus-visible { color: var(--accent); border-color: rgba(184,255,89,.45); outline: none; }
+.scanner-panel { margin-top: 22px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; }
+.scanner-viewport { position: relative; aspect-ratio: 16 / 10; max-height: 440px; background: #050607; overflow: hidden; }
+.scanner-viewport video, .scanner-viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scanner-viewport canvas { pointer-events: none; }
+.scanner-frame { position: absolute; inset: 18%; border: 1px solid rgba(184,255,89,.72); box-shadow: 0 0 0 999px rgba(0,0,0,.22); pointer-events: none; }
+.scanner-copy { min-height: 54px; padding: 10px 12px 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
 .session-panel { max-width: 830px; }
 .session-grid { display: grid; grid-template-columns: minmax(250px, 330px) 1fr; border: 1px solid var(--line); background: rgba(255,255,255,.018); }
 .qr-wrap { min-height: 330px; background: #fff; padding: 24px; display: grid; place-items: center; color: #000; }
@@ -69,6 +79,8 @@ h1 { font-size: clamp(64px, 9vw, 138px); line-height: .86; letter-spacing: -.075
 .progress-meta, .progress-foot { display: flex; justify-content: space-between; gap: 14px; }
 .progress-meta { font-size: 14px; font-weight: 650; }
 .progress-foot { color: var(--muted); font-size: 12px; margin-top: 10px; }
+.progress-transport { display: inline-flex; gap: 10px; flex-wrap: wrap; }
+.progress-transport [data-eta]::before { content: "· "; color: #60665f; }
 .progress-track { height: 3px; margin-top: 13px; background: rgba(255,255,255,.10); overflow: hidden; }
 .progress-track i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .12s linear; }
 .session-actions { display: flex; gap: 10px; margin-top: 28px; }
@@ -110,6 +122,11 @@ body[data-state="failed"] .pulse-dot, body[data-state="expired"] .pulse-dot { ba
   .lede { margin-bottom: 34px; font-size: 15px; }
   .dropzone { min-height: 210px; }
   .receive-row { grid-template-columns: 1fr; gap: 7px; margin-top: 30px; }
+  .receive-label { padding-top: 0; }
+  .receive-actions { justify-content: stretch; }
+  .receive-actions .utility-button { flex: 1; }
+  .scanner-viewport { aspect-ratio: 3 / 4; }
+  .scanner-copy { align-items: stretch; flex-direction: column; }
   .session-grid { grid-template-columns: 1fr; }
   .qr-wrap { min-height: 280px; }
   .session-copy { padding: 24px; }
