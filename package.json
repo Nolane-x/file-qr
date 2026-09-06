@@ -13,7 +13,8 @@
     "build:web": "npm --workspace @file-qr/web run build",
     "build:native-ui": "npm --workspace @file-qr/native run build",
     "check:signaling": "npm --workspace @file-qr/signaling run check",
-    "verify": "npm test && npm run build:web && npm run build:native-ui && npm run check:signaling",
+    "check:web-deploy": "wrangler deploy --dry-run --config apps/web/wrangler.jsonc",
+    "verify": "npm test && npm run build:web && npm run build:native-ui && npm run check:signaling && npm run check:web-deploy",
     "nui:setup": "node scripts/setup-nui.mjs"
   },
   "engines": { "node": ">=22" }

@@ -48,3 +48,10 @@ test('native workflow publishes one release per package version from main', () =
   assert.ok(yml.includes('--target "$GITHUB_SHA"'));
   assert.ok(yml.includes('actions/download-artifact@v5'));
 });
+
+test('CI dry-runs the Cloudflare web deployment configuration', () => {
+  const yml = read('../../.github/workflows/ci.yml');
+  const pkg = JSON.parse(read('../../package.json'));
+  assert.equal(pkg.scripts['check:web-deploy'], 'wrangler deploy --dry-run --config apps/web/wrangler.jsonc');
+  assert.ok(yml.includes('npm run check:web-deploy'));
+});
