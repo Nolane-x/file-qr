@@ -9,7 +9,7 @@ test('web deployment uses Cloudflare Workers static assets with production smoke
   assert.ok(yml.includes('wrangler deploy --config apps/web/wrangler.jsonc'));
   assert.ok(yml.includes('CLOUDFLARE_API_TOKEN'));
   assert.ok(yml.includes('CLOUDFLARE_ACCOUNT_ID'));
-  assert.ok(yml.includes('https://file-qr-web.nolane-file.workers.dev'));
+  assert.ok(yml.includes('https://fileqr.nolane-file.workers.dev'));
   assert.ok(!yml.includes('actions/configure-pages@v5'));
   assert.ok(!yml.includes('actions/deploy-pages@v4'));
 });
@@ -18,7 +18,7 @@ test('web worker configuration publishes the Vite dist directory as static asset
   const configUrl = new URL('../../apps/web/wrangler.jsonc', import.meta.url);
   assert.ok(fs.existsSync(configUrl));
   const config = read('../../apps/web/wrangler.jsonc');
-  assert.ok(config.includes('"name": "file-qr-web"'));
+  assert.ok(config.includes('"name": "fileqr"'));
   assert.ok(config.includes('"directory": "./dist"'));
   assert.ok(config.includes('"not_found_handling": "single-page-application"'));
 });
