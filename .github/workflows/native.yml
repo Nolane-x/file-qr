@@ -1,8 +1,9 @@
 name: Native Builds
 on:
   pull_request:
+    branches: [main]
   push:
-    branches: [main, 'feat/**']
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -22,7 +23,7 @@ jobs:
       - run: npx tauri build --bundles nsis
         working-directory: apps/native
         env:
-          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN }}
+          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
       - name: Normalize Windows artifact name
         shell: pwsh
         run: |
@@ -56,7 +57,7 @@ jobs:
         working-directory: apps/native
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN }}
+          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
       - name: Normalize Android artifact name
         run: |
           mkdir -p release
