@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite --port 1420",
     "build": "vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "android:init": "tauri android init && node ../../scripts/patch-android-manifest.mjs",
+    "android:patch": "node ../../scripts/patch-android-manifest.mjs"
   },
   "dependencies": {
     "qr": "0.7.0",

@@ -49,9 +49,13 @@ jobs:
       - name: Install Android NDK
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
       - run: npm install
-      - name: Initialize Android project
-        run: npx tauri android init
+      - name: Initialize Android project with camera permission
+        run: npm run android:init
         working-directory: apps/native
+      - name: Verify Android camera manifest
+        run: |
+          grep -R -q 'android.permission.CAMERA' apps/native/src-tauri/gen/android
+          grep -R -q 'android.hardware.camera.any' apps/native/src-tauri/gen/android
       - name: Build installable preview APK
         run: npx tauri android build --apk --debug --target aarch64
         working-directory: apps/native
