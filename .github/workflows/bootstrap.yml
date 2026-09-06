@@ -1,0 +1,57 @@
+name: Bootstrap source
+
+on:
+  push:
+    branches:
+      - feat/v0.1-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize repository payload
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { readFileSync, writeFileSync, mkdirSync, rmSync } = require('node:fs');
+          const { dirname } = require('node:path');
+          const { brotliDecompressSync } = require('node:zlib');
+
+          const encoded = [1, 2, 3, 4]
+            .map((part) => readFileSync(`bootstrap.part${part}`, 'utf8'))
+            .join('');
+          const files = JSON.parse(
+            brotliDecompressSync(Buffer.from(encoded, 'base64')).toString('utf8')
+          );
+
+          let written = 0;
+          for (const [path, content] of Object.entries(files)) {
+            if (path.startsWith('.github/workflows/')) continue;
+            mkdirSync(dirname(path), { recursive: true });
+            writeFileSync(path, content, 'utf8');
+            written += 1;
+          }
+
+          for (const part of [1, 2, 3, 4]) {
+            rmSync(`bootstrap.part${part}`, { force: true });
+          }
+
+          console.log(`Materialized ${written} source files; workflow files will be installed separately.`);
+          NODE
+
+      - name: Commit materialized source
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          git commit -m "feat: materialize File QR v0.1 source"
+          git push origin HEAD:feat/v0.1-foundation
