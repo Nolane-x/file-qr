@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "File QR",
+  "version": "0.1.0",
+  "identifier": "com.nolane.fileqr",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "File QR",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Drop. Scan. Receive.",
+    "longDescription": "Direct WebRTC and offline optical file transfer for Windows and Android."
+  }
+}

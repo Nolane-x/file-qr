@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#090a0c" />
+    <meta name="description" content="Drop a file. Scan or enter a code. Receive it directly." />
+    <title>File QR — Drop. Scan. Receive.</title>
+  </head>
+  <body data-state="idle">
+    <div class="grain" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="File QR home"><span class="brand-mark" aria-hidden="true"></span><span>File QR</span></a>
+      <a class="github-link" href="https://github.com/Nolane-x/file-qr" target="_blank" rel="noreferrer">Open source <span aria-hidden="true">↗</span></a>
+    </header>
+
+    <main class="shell">
+      <section class="transfer-stage" aria-labelledby="stage-title">
+        <div class="eyebrow"><span class="pulse-dot"></span><span data-eyebrow>Direct transfer</span></div>
+        <h1 id="stage-title" data-title>Drop a file.</h1>
+        <p class="lede" data-description>It stays on your device until someone connects. No account. No cloud file storage.</p>
+
+        <div class="idle-panel" data-view="idle">
+          <label class="dropzone" data-dropzone tabindex="0">
+            <input data-file-input type="file" hidden />
+            <span class="drop-icon" aria-hidden="true">↗</span>
+            <strong>Drop anything here</strong>
+            <span>or click to choose a file</span>
+          </label>
+
+          <div class="receive-row">
+            <span class="receive-label">Receive something?</span>
+            <form class="receive-form" data-receive-form>
+              <input data-code-input inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="11" placeholder="ABCDE-FGHJK" aria-label="Receive code" />
+              <button type="submit" aria-label="Receive file"><span>Receive</span><span aria-hidden="true">→</span></button>
+            </form>
+          </div>
+        </div>
+
+        <div class="session-panel" data-view="session" hidden>
+          <div class="session-grid">
+            <div class="qr-wrap" data-qr aria-label="QR code to receive the file"></div>
+            <div class="session-copy">
+              <div class="file-chip"><span class="file-glyph" aria-hidden="true"></span><div><strong data-file-name>file</strong><span data-file-size>0 B</span></div></div>
+              <div class="code-block">
+                <span>Receive code</span>
+                <button type="button" class="code-button" data-copy-code><strong data-code>—</strong><span>Copy</span></button>
+              </div>
+              <div class="ttl"><span>Available for new receivers</span><strong data-countdown>10:00</strong></div>
+            </div>
+          </div>
+          <div class="progress-wrap" data-progress-wrap hidden>
+            <div class="progress-meta"><span data-progress-label>Connecting</span><span data-progress-value>0%</span></div>
+            <div class="progress-track"><i data-progress-bar></i></div>
+            <div class="progress-foot"><span data-rate>Secure P2P</span><span data-transfer-size></span></div>
+          </div>
+          <div class="session-actions">
+            <button type="button" class="secondary" data-copy-link>Copy link</button>
+            <button type="button" class="secondary danger" data-cancel>Cancel</button>
+            <button type="button" class="primary" data-again hidden>Send another</button>
+          </div>
+        </div>
+
+        <div class="status-line" aria-live="polite" aria-atomic="true" data-status>Ready to send or receive.</div>
+      </section>
+
+      <aside class="native-rail" aria-label="Native apps">
+        <div>
+          <span class="rail-kicker">Need it offline?</span>
+          <h2>Use the native app.</h2>
+          <p>Windows and Android add offline optical transfer on top of the network path.</p>
+        </div>
+        <div class="download-stack">
+          <a data-download-windows href="https://github.com/Nolane-x/file-qr/releases/latest/download/FileQR-Windows-x64-setup.exe">
+            <span class="os-icon">⊞</span><span><strong>Windows</strong><small>Download app</small></span><b>↓</b>
+          </a>
+          <a data-download-android href="https://github.com/Nolane-x/file-qr/releases/latest/download/FileQR-Android-arm64.apk">
+            <span class="os-icon">◉</span><span><strong>Android</strong><small>Download APK</small></span><b>↓</b>
+          </a>
+        </div>
+        <div class="rail-proof"><span>10 min</span><span>WebRTC</span><span>No file server</span></div>
+      </aside>
+    </main>
+
+    <footer><span>Windows + Android preview</span><span>Drop · Scan · Receive</span></footer>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

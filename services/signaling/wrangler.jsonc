@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "file-qr-signaling",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-06",
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSIONS", "class_name": "SessionRoom" }
+    ]
+  },
+  "exports": {
+    "SessionRoom": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "vars": {
+    "SESSION_TTL_MS": "600000"
+  }
+}

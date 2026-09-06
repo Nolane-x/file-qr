@@ -1,0 +1,20 @@
+{
+  "name": "file-qr",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/web",
+    "apps/native",
+    "services/signaling"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "build:web": "npm --workspace @file-qr/web run build",
+    "build:native-ui": "npm --workspace @file-qr/native run build",
+    "check:signaling": "npm --workspace @file-qr/signaling run check",
+    "verify": "npm test && npm run build:web && npm run build:native-ui && npm run check:signaling",
+    "nui:setup": "node scripts/setup-nui.mjs"
+  },
+  "engines": { "node": ">=22" }
+}
