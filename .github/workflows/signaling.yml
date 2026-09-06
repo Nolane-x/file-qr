@@ -1,7 +1,5 @@
 name: Deploy Signaling
 on:
-  push:
-    branches: ['feat/v0.1-foundation']
   workflow_dispatch:
 
 jobs:
