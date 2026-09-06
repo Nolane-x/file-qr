@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#090a0c" />
+  <title>File QR</title>
+</head>
+<body data-state="idle" class="native-shell">
+  <header class="native-header">
+    <div class="brand"><span class="brand-mark"></span><span>File QR</span></div>
+    <nav class="mode-switch" aria-label="Transfer mode">
+      <button data-mode="network" aria-pressed="true">Network</button>
+      <button data-mode="optical" aria-pressed="false">QR Stream <em>Offline</em></button>
+    </nav>
+  </header>
+
+  <main class="native-stage">
+    <section data-network-panel>
+      <div class="transfer-stage">
+        <div class="eyebrow"><span class="pulse-dot"></span><span data-eyebrow>Direct transfer</span></div>
+        <h1 data-title>Drop a file.</h1>
+        <p class="lede" data-description>Network mode uses the same encrypted peer-to-peer path as File QR Web.</p>
+        <div class="idle-panel" data-view="idle">
+          <label class="dropzone" data-dropzone tabindex="0">
+            <input data-file-input type="file" hidden />
+            <span class="drop-icon">↗</span><strong>Drop anything here</strong><span>or click to choose a file</span>
+          </label>
+          <div class="receive-row"><span class="receive-label">Receive something?</span><form class="receive-form" data-receive-form><input data-code-input maxlength="11" placeholder="ABCDE-FGHJK" aria-label="Receive code" /><button type="submit"><span>Receive</span><span>→</span></button></form></div>
+        </div>
+        <div class="session-panel" data-view="session" hidden>
+          <div class="session-grid"><div class="qr-wrap" data-qr></div><div class="session-copy">
+            <div class="file-chip"><span class="file-glyph"></span><div><strong data-file-name>file</strong><span data-file-size>0 B</span></div></div>
+            <div class="code-block"><span>Receive code</span><button type="button" class="code-button" data-copy-code><strong data-code>—</strong><span>Copy</span></button></div>
+            <div class="ttl"><span>Available for new receivers</span><strong data-countdown>10:00</strong></div>
+          </div></div>
+          <div class="progress-wrap" data-progress-wrap hidden><div class="progress-meta"><span data-progress-label>Connecting</span><span data-progress-value>0%</span></div><div class="progress-track"><i data-progress-bar></i></div><div class="progress-foot"><span data-rate>Secure P2P</span><span data-transfer-size></span></div></div>
+          <div class="session-actions"><button type="button" class="secondary" data-copy-link>Copy link</button><button type="button" class="secondary danger" data-cancel>Cancel</button><button type="button" class="primary" data-again hidden>Send another</button></div>
+        </div>
+        <div class="status-line" aria-live="polite" data-status>Ready to send or receive.</div>
+      </div>
+    </section>
+
+    <section class="optical-stage" data-optical-panel hidden>
+      <div class="optical-copy">
+        <div class="eyebrow"><span class="pulse-dot"></span><span>Air-gap transfer</span></div>
+        <h1>QR Stream.</h1>
+        <p class="lede">No router. No internet. The screen becomes the link. V0.1 uses repeated CRC-checked QR frames and automatically fills missed frames on the next loop.</p>
+        <div class="optical-actions">
+          <label class="optical-action"><input data-optical-file type="file" hidden /><span>Send offline</span><strong>Choose file</strong><b>→</b></label>
+          <button class="optical-action" data-camera><span>Receive offline</span><strong>Open camera</strong><b>◎</b></button>
+        </div>
+        <p class="optical-note">Experimental baseline. For large files, Network mode is dramatically faster; the optical protocol is intentionally versioned for future FEC and denser visual modulation.</p>
+      </div>
+      <div class="optical-visual">
+        <div class="optical-qr" data-optical-qr><div class="optical-placeholder">FILE<br/>QR</div></div>
+        <video data-optical-video playsinline muted hidden></video>
+        <canvas data-optical-overlay hidden></canvas>
+        <div class="optical-meter"><span data-optical-status>Choose a file or open the camera.</span><strong data-optical-progress>—</strong></div>
+        <div class="progress-track"><i data-optical-bar></i></div>
+        <button class="secondary danger" data-optical-stop hidden>Stop optical transfer</button>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

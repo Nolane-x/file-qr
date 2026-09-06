@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.nui/
+apps/native/src-tauri/target/
+apps/native/src-tauri/gen/
+.DS_Store
+*.log

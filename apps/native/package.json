@@ -1,0 +1,20 @@
+{
+  "name": "@file-qr/native",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 1420",
+    "build": "vite build",
+    "tauri": "tauri",
+    "android:init": "tauri android init && node ../../scripts/patch-android-manifest.mjs",
+    "android:patch": "node ../../scripts/patch-android-manifest.mjs"
+  },
+  "dependencies": {
+    "qr": "0.7.0",
+    "@tauri-apps/api": "2.11.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "vite": "8.2.2"
+  }
+}

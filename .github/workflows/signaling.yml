@@ -1,0 +1,87 @@
+name: Deploy Signaling
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - run: npm install
+      - run: npm run check:signaling
+
+      - name: Validate Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Missing Cloudflare API token. Expected repository secret CLOUDFLARE_API_TOKEN or CLOUDFLARE"
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Missing CLOUDFLARE_ACCOUNT_ID (repository secret or variable)"
+            exit 1
+          fi
+
+      - name: Deploy signaling worker
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+          NO_COLOR: '1'
+        run: |
+          set -euo pipefail
+          log_file="$(mktemp)"
+          npm --workspace @file-qr/signaling run deploy 2>&1 | tee "$log_file"
+          worker_url="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$log_file" | tail -n 1 || true)"
+          if [ -z "$worker_url" ]; then
+            echo "::error::Wrangler completed but no workers.dev URL was found in its output"
+            exit 1
+          fi
+          echo "url=$worker_url" >> "$GITHUB_OUTPUT"
+          {
+            echo '### File QR signaling deployment'
+            echo
+            echo "Worker: $worker_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify deployed worker
+        env:
+          WORKER_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          health=""
+          for attempt in $(seq 1 15); do
+            candidate="$(curl --fail --silent --show-error --max-time 10 "$WORKER_URL/health" || true)"
+            if node -e 'try { const x=JSON.parse(process.argv[1]); process.exit(x.ok === true && x.service === "file-qr-signaling" ? 0 : 1); } catch { process.exit(1); }' "$candidate"; then
+              health="$candidate"
+              break
+            fi
+            echo "Waiting for deployed worker version ($attempt/15)..."
+            sleep 2
+          done
+
+          if [ -z "$health" ]; then
+            echo "::error::Deployed workers.dev endpoint did not converge to file-qr-signaling"
+            exit 1
+          fi
+          echo "$health"
+
+          session="$(curl --fail --silent --show-error --max-time 10 -X POST "$WORKER_URL/v1/sessions")"
+          echo "$session"
+          node -e 'const x=JSON.parse(process.argv[1]); if (!x.code || !x.senderToken || !Number.isFinite(x.expiresAt)) process.exit(1)' "$session"
+
+          {
+            echo
+            echo 'Health check: PASS'
+            echo 'Durable Object session allocation: PASS'
+          } >> "$GITHUB_STEP_SUMMARY"

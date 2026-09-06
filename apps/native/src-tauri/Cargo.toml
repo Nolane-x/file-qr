@@ -1,0 +1,21 @@
+[package]
+name = "file-qr"
+version = "0.1.0"
+description = "Direct and offline optical file transfer for Windows and Android"
+authors = ["Nolane-x"]
+edition = "2021"
+
+[lib]
+name = "file_qr_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-barcode-scanner = "2"

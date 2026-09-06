@@ -1,0 +1,87 @@
+name: Native Builds
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - run: npx tauri build --bundles nsis
+        working-directory: apps/native
+        env:
+          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
+      - name: Normalize Windows artifact name
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $installer = Get-ChildItem apps/native/src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          Copy-Item $installer.FullName release/FileQR-Windows-x64-setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-qr-windows
+          path: release/FileQR-Windows-x64-setup.exe
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - name: Install Android NDK
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+      - run: npm install
+      - name: Initialize Android project with camera permission
+        run: npm run android:init
+        working-directory: apps/native
+      - name: Verify Android camera manifest
+        run: |
+          grep -R -q 'android.permission.CAMERA' apps/native/src-tauri/gen/android
+          grep -R -q 'android.hardware.camera.any' apps/native/src-tauri/gen/android
+      - name: Build installable preview APK
+        run: npx tauri android build --apk --debug --target aarch64
+        working-directory: apps/native
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
+      - name: Normalize Android artifact name
+        run: |
+          mkdir -p release
+          apk=$(find apps/native/src-tauri/gen/android -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          cp "$apk" release/FileQR-Android-arm64.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: file-qr-android
+          path: release/FileQR-Android-arm64.apk
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [windows, android]
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+      - name: Publish GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" release-assets/**/* --repo "${GITHUB_REPOSITORY}" --generate-notes
