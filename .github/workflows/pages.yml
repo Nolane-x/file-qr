@@ -25,7 +25,7 @@ jobs:
       - run: npm install
       - run: npm run build:web
         env:
-          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN }}
+          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
       - uses: actions/upload-pages-artifact@v4
         with:
           path: apps/web/dist
