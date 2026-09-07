@@ -136,7 +136,7 @@ async function createOpfsSink(meta, options = {}) {
   if (!handle) handle = await root.getFileHandle(partName, { create: true });
   if (!savedMeta) await writePartialMeta(root, metaName, { ...meta });
 
-  const writable = await handle.createWritable({ keepExistingData: true });
+  const writable = await handle.createWritable({ keepExistingData: existingSize > 0 });
   if (existingSize > 0) await writable.seek(existingSize);
   let received = existingSize;
   let closed = false;
