@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/',
+  base: process.env.VITE_BASE || '/',
   server: {
     port: 5173,
     fs: { allow: ['../..'] },
