@@ -18,6 +18,13 @@ test('physical Android evidence is manual-only on a dedicated self-hosted device
   assert.match(workflow, /android-physical-evidence\.json/);
 });
 
+test('self-hosted Android evidence refuses non-main dispatch refs and checks out trusted main', () => {
+  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+
+  assert.match(workflow, /if:\s*github\.ref\s*==\s*['"]refs\/heads\/main['"]/);
+  assert.match(workflow, /uses:\s*actions\/checkout@v6[\s\S]*?with:\s*\n\s*ref:\s*main/);
+});
+
 test('physical Android collector proves a non-emulator camera path without recording camera imagery', () => {
   assert.ok(fs.existsSync(collectorUrl), 'physical Android evidence collector must exist');
   const source = fs.readFileSync(collectorUrl, 'utf8');
