@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemorySink, partialStorageKey, partialMetaCompatible } from '../../apps/web/src/storage.js';
+import { createMemorySink, createReceiveSink, partialStorageKey, partialMetaCompatible } from '../../apps/web/src/storage.js';
 
 const meta = {
   fileId: 'FILE1234',
@@ -8,6 +8,79 @@ const meta = {
   size: 6,
   type: 'application/octet-stream',
 };
+
+function createFakeOpfs(initialEntries = {}) {
+  const entries = new Map(
+    Object.entries(initialEntries).map(([name, bytes]) => [name, Uint8Array.from(bytes)]),
+  );
+
+  function handleFor(name) {
+    return {
+      async getFile() {
+        const bytes = entries.get(name);
+        if (!bytes) throw new Error('not found');
+        return new File([bytes], name, { type: 'application/octet-stream' });
+      },
+      async createWritable({ keepExistingData = false } = {}) {
+        let data = keepExistingData && entries.has(name)
+          ? entries.get(name).slice()
+          : new Uint8Array();
+        let position = 0;
+
+        return {
+          async seek(nextPosition) { position = nextPosition; },
+          async write(value) {
+            const bytes = typeof value === 'string'
+              ? new TextEncoder().encode(value)
+              : value instanceof Uint8Array
+                ? value
+                : new Uint8Array(value);
+            const required = position + bytes.byteLength;
+            if (required > data.byteLength) {
+              const grown = new Uint8Array(required);
+              grown.set(data);
+              data = grown;
+            }
+            data.set(bytes, position);
+            position = required;
+          },
+          async close() { entries.set(name, data.slice()); },
+        };
+      },
+    };
+  }
+
+  return {
+    entries,
+    async getFileHandle(name, { create = false } = {}) {
+      if (!entries.has(name)) {
+        if (!create) throw new Error('not found');
+        entries.set(name, new Uint8Array());
+      }
+      return handleFor(name);
+    },
+    async removeEntry(name) {
+      if (!entries.delete(name)) throw new Error('not found');
+    },
+  };
+}
+
+function installFakeStorage(t, root) {
+  const previousNavigator = globalThis.navigator;
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { storage: { getDirectory: async () => root } },
+  });
+  t.after(() => {
+    if (previousNavigator === undefined) delete globalThis.navigator;
+    else {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: previousNavigator,
+      });
+    }
+  });
+}
 
 test('partial identity is deterministic and filesystem-safe', () => {
   const a = partialStorageKey('ABCDE-FGHJK', 'FILE1234');
@@ -51,4 +124,24 @@ test('explicit discard removes a retryable memory partial', async () => {
   const second = createMemorySink({ ...meta, fileId: 'DISCARD1' }, { limit: 32, key });
   assert.equal(second.offset, 0);
   await second.abort({ discard: true });
+});
+
+test('fresh OPFS transfer truncates an orphaned stale part when metadata is absent', async (t) => {
+  const leaseCode = 'ABCDE-FGHJK';
+  const freshMeta = { ...meta, size: 3 };
+  const key = partialStorageKey(leaseCode, freshMeta.fileId);
+  const root = createFakeOpfs({
+    [`${key}.part`]: Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8, 9),
+  });
+  installFakeStorage(t, root);
+
+  const sink = await createReceiveSink(freshMeta, { leaseCode, fileId: freshMeta.fileId });
+  assert.equal(sink.kind, 'opfs');
+  assert.equal(sink.offset, 0);
+  await sink.write(Uint8Array.of(7, 8, 9));
+  const file = await sink.close();
+
+  assert.equal(file.size, freshMeta.size, 'fresh transfer must not retain stale OPFS tail bytes');
+  assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [7, 8, 9]);
+  await sink.cleanup();
 });
