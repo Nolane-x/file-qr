@@ -28,11 +28,19 @@ File QR is a deliberately small file-transfer product for **Windows and Android*
 
 ## Production
 
-Web app:
+Primary web app:
 
 ```text
 https://fileqr.nolane-file.workers.dev
 ```
+
+GitHub Pages mirror:
+
+```text
+https://nolane-x.github.io/file-qr/
+```
+
+The mirror serves the same static client and uses the same verified signaling rendezvous. Cloudflare remains the primary production origin; GitHub Pages is an independent fallback/mirror rather than a second signaling service.
 
 Signaling health:
 
@@ -62,7 +70,7 @@ packages/core/            transport-neutral protocol primitives
 services/signaling/       Cloudflare Worker + Durable Object rendezvous
 tests/                    protocol, runtime and structural release gates
 docs/superpowers/         design specs + implementation plans
-.github/workflows/        CI, web deployment, signaling and native release builds
+.github/workflows/        CI, Cloudflare primary, GitHub Pages mirror, signaling and native release builds
 ```
 
 ## Development
@@ -114,7 +122,12 @@ The deployment smoke test also allocates a real ephemeral session through `POST 
 
 ### Web
 
-Pushes to `main` build the Vite app, deploy `apps/web/dist` as Cloudflare Workers Static Assets using `apps/web/wrangler.jsonc`, then smoke-test `https://fileqr.nolane-file.workers.dev/`.
+Pushes to `main` run two isolated static-site deployments:
+
+- `.github/workflows/pages.yml` builds with the default Vite base `/`, deploys `apps/web/dist` to the primary Cloudflare Workers Static Assets project, then smoke-tests `https://fileqr.nolane-file.workers.dev/`.
+- `.github/workflows/github-pages.yml` builds with `VITE_BASE=/file-qr/`, verifies that generated asset URLs use the repository base, uploads the Pages artifact, and deploys it to the `github-pages` environment. Pull requests execute the mirror build gate but never deploy.
+
+The GitHub Pages repository setting must use **GitHub Actions** as the publishing source. The mirror workflow fails closed if Pages is not enabled/configured; it never changes the Cloudflare deployment or signaling origin.
 
 ### Native release
 
