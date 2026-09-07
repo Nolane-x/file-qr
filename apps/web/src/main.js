@@ -2,7 +2,7 @@ import encodeQR from 'qr';
 import './style.css';
 import { isReceiveCode, normalizeReceiveCode, compactReceiveCode } from '../../../packages/core/session.js';
 import { DEFAULT_CHUNK_SIZE, encodeControlMessage, validateResumeOffset } from '../../../packages/core/transfer.js';
-import { createPeerConnection, createRemoteCandidateBuffer, createTransferChannel, parseDataChannelMessage, streamFileOverChannel, waitForBufferedAmountLow } from './webrtc.js';
+import { createIceRecoveryController, createPeerConnection, createRemoteCandidateBuffer, createTransferChannel, detectSelectedCandidateType, parseDataChannelMessage, streamFileOverChannel, waitForBufferedAmountLow } from './webrtc.js';
 import { connectSignal, sendSignal } from './signaling.js';
 import { createReceiveSink, downloadReceivedFile } from './storage.js';
 import { parseReceivePayload } from './receive-payload.js';
@@ -52,6 +52,8 @@ function freshAttempt() {
     channel: null,
     candidateBuffer: null,
     connectionTimer: null,
+    iceRecovery: null,
+    transportType: 'unknown',
     sink: null,
     meta: null,
     startedAt: 0,
@@ -127,6 +129,12 @@ function formatRate(bytes, elapsedMs) {
   return `${formatBytes(bytes / (elapsedMs / 1000))}/s`;
 }
 
+function transportLabel(type) {
+  if (type === 'direct') return 'Direct';
+  if (type === 'relay') return 'Relay';
+  return 'Secure P2P';
+}
+
 function platformSupported() {
   if (['localhost', '127.0.0.1'].includes(location.hostname)) return true;
   const ua = navigator.userAgent;
@@ -156,7 +164,7 @@ function updateProgress(done, total, label) {
   ui.progressLabel.textContent = label;
   ui.transferSize.textContent = `${formatBytes(done)} / ${formatBytes(total)}`;
   ui.rate.textContent = formatRate(Math.max(0, done), elapsedMs);
-  if (ui.eta) ui.eta.textContent = estimateEta(done, total, elapsedMs) || (ratio >= 1 ? 'Complete' : 'Direct P2P');
+  if (ui.eta) ui.eta.textContent = estimateEta(done, total, elapsedMs) || (ratio >= 1 ? 'Complete' : transportLabel(current.attempt.transportType));
 }
 
 function leaseOpen() {
@@ -177,6 +185,7 @@ async function cleanupAttempt({ discardPartial = false } = {}) {
   const attempt = current.attempt;
   current.attempt = freshAttempt();
   if (attempt.connectionTimer) clearTimeout(attempt.connectionTimer);
+  attempt.iceRecovery?.dispose?.();
   try { attempt.channel?.close(); } catch { /* no-op */ }
   try { attempt.peer?.close(); } catch { /* no-op */ }
   if (attempt.sink?.abort) {
@@ -282,20 +291,54 @@ function attachIce(peer, socket, attemptId) {
   });
 }
 
-function attachConnectionDiagnostics(peer, attemptId) {
+function attachConnectionDiagnostics(peer, socket, attemptId) {
+  const renegotiate = async () => {
+    if (current.attempt.peer !== peer || current.attempt.id !== attemptId) return;
+    const offer = await peer.createOffer({ iceRestart: true });
+    await peer.setLocalDescription(offer);
+    sendSignal(socket, { type: 'description', description: peer.localDescription, attemptId });
+  };
+
+  const iceRecovery = createIceRecoveryController(peer, renegotiate, {
+    onExhausted() {
+      if (current.attempt.peer === peer && current.attempt.id === attemptId) {
+        failTransfer('The WebRTC path failed after one ICE recovery attempt.').catch(() => {});
+      }
+    },
+    onError(error) {
+      if (current.attempt.peer === peer && current.attempt.id === attemptId) {
+        failTransfer(error?.message || 'ICE recovery failed.').catch(() => {});
+      }
+    },
+  });
+  current.attempt.iceRecovery = iceRecovery;
+
   peer.addEventListener('connectionstatechange', () => {
     if (current.attempt.peer !== peer || current.attempt.id !== attemptId) return;
     const state = peer.connectionState;
     if (state === 'connected') {
       stopConnectionTimer();
+      iceRecovery.handleState(state).catch(() => {});
+      detectSelectedCandidateType(peer).then((type) => {
+        if (current.attempt.peer !== peer || current.attempt.id !== attemptId) return;
+        current.attempt.transportType = type;
+        const label = transportLabel(type);
+        if (ui.eta) ui.eta.textContent = label;
+        if (current.state === 'connecting') ui.status.textContent = `${label} path established.`;
+      }).catch(() => {});
       return;
     }
-    if (state === 'failed') {
-      failTransfer('The direct WebRTC path failed.').catch(() => {});
+    if (state === 'disconnected' || state === 'failed') {
+      iceRecovery.handleState(state).catch((error) => {
+        failTransfer(error?.message || 'ICE recovery failed.').catch(() => {});
+      });
       return;
     }
-    if (state === 'closed' && LIVE_CONNECTION_STATES.has(current.state)) {
-      failTransfer('The direct WebRTC connection closed before the transfer finished.').catch(() => {});
+    if (state === 'closed') {
+      iceRecovery.handleState(state).catch(() => {});
+      if (LIVE_CONNECTION_STATES.has(current.state)) {
+        failTransfer('The direct WebRTC connection closed before the transfer finished.').catch(() => {});
+      }
     }
   });
 }
@@ -311,7 +354,7 @@ async function handleRemoteSignal(peer, socket, event, role, candidateBuffer, at
   if (message.type === 'description' && message.description) {
     await peer.setRemoteDescription(message.description);
     await candidateBuffer.flush();
-    if (role === 'receiver' && message.description.type === 'offer') {
+    if (message.description.type === 'offer') {
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
       sendSignal(socket, { type: 'description', description: peer.localDescription, attemptId });
@@ -394,7 +437,7 @@ async function startSenderAttempt(attemptId) {
   const candidateBuffer = createRemoteCandidateBuffer(peer);
   current.attempt = { ...freshAttempt(), id: attemptId, peer, channel, candidateBuffer };
   attachIce(peer, socket, attemptId);
-  attachConnectionDiagnostics(peer, attemptId);
+  attachConnectionDiagnostics(peer, socket, attemptId);
 
   channel.addEventListener('open', () => {
     if (current.attempt.id !== attemptId) return;
@@ -469,6 +512,7 @@ async function ensureSenderSignal() {
   if (current.role !== 'sender' || !leaseOpen() || current.reconnecting) return;
   if (current.socket?.readyState === WebSocket.OPEN) return;
   current.reconnecting = true;
+  let retrySignal = false;
   try {
     const socket = await connectSignal(SIGNALING_ORIGIN, current.code, 'sender', current.token);
     await socket.fileQrConnected;
@@ -480,10 +524,11 @@ async function ensureSenderSignal() {
     bindSenderSocket(socket);
     if (current.state === 'ready') ui.status.textContent = 'Signaling restored. Code remains available.';
   } catch {
-    if (leaseOpen()) scheduleSenderSignalReconnect();
+    retrySignal = true;
   } finally {
     current.reconnecting = false;
   }
+  if (retrySignal && leaseOpen()) scheduleSenderSignalReconnect();
 }
 
 async function sendFile(file) {
@@ -629,7 +674,7 @@ async function receiveFile(rawCode) {
     const candidateBuffer = createRemoteCandidateBuffer(peer);
     current.attempt = { ...freshAttempt(), id: attemptId, peer, candidateBuffer };
     attachIce(peer, socket, attemptId);
-    attachConnectionDiagnostics(peer, attemptId);
+    attachConnectionDiagnostics(peer, socket, attemptId);
     startConnectionTimer();
     startCountdown(current.expiresAt, () => { handleLeaseExpiry().catch(() => {}); });
 
