@@ -49,20 +49,11 @@ export function boundsCenter(xml, label = 'Scan QR') {
   return { x: Math.floor((x1 + x2) / 2), y: Math.floor((y1 + y2) / 2) };
 }
 
-function getProp(serial, name) {
-  return adb(serial, ['shell', 'getprop', name]);
-}
-
-function uiDump(serial) {
-  adb(serial, ['shell', 'uiautomator', 'dump', '/sdcard/fileqr-ui.xml']);
-  return adb(serial, ['shell', 'cat', '/sdcard/fileqr-ui.xml']);
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitFor(predicate, timeoutMs, intervalMs = 500) {
+async function waitFor(predicate, timeoutMs, intervalMs = 500, sleepFn = sleep) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
@@ -72,7 +63,7 @@ async function waitFor(predicate, timeoutMs, intervalMs = 500) {
     } catch (error) {
       lastError = error;
     }
-    await sleep(intervalMs);
+    await sleepFn(intervalMs);
   }
   if (lastError) throw lastError;
   return null;
@@ -81,12 +72,20 @@ async function waitFor(predicate, timeoutMs, intervalMs = 500) {
 export async function collectPhysicalAndroidEvidence({
   apkPath = defaultApkPath,
   evidencePath = defaultEvidencePath,
+  adbFn = adb,
+  sleepFn = sleep,
 } = {}) {
+  const getProp = (serial, name) => adbFn(serial, ['shell', 'getprop', name]);
+  const uiDump = (serial) => {
+    adbFn(serial, ['shell', 'uiautomator', 'dump', '/sdcard/fileqr-ui.xml']);
+    return adbFn(serial, ['shell', 'cat', '/sdcard/fileqr-ui.xml']);
+  };
+
   if (!fs.existsSync(apkPath)) {
     throw new Error(`Android APK not found: ${apkPath}`);
   }
 
-  const devices = parseAuthorizedDevices(adb('', ['devices', '-l']));
+  const devices = parseAuthorizedDevices(adbFn('', ['devices', '-l']));
   if (devices.length !== 1) {
     throw new Error(`Physical Android evidence requires exactly one authorized ADB device; found ${devices.length}`);
   }
@@ -105,9 +104,9 @@ export async function collectPhysicalAndroidEvidence({
   }
 
   const apkSha256 = sha256(fs.readFileSync(apkPath));
-  adb(serial, ['install', '-r', apkPath]);
+  adbFn(serial, ['install', '-r', apkPath]);
 
-  let packageDump = adb(serial, ['shell', 'dumpsys', 'package', packageName]);
+  let packageDump = adbFn(serial, ['shell', 'dumpsys', 'package', packageName]);
   if (!packageDump.includes('android.permission.CAMERA')) {
     throw new Error('Installed File QR package does not declare android.permission.CAMERA');
   }
@@ -115,15 +114,15 @@ export async function collectPhysicalAndroidEvidence({
   const versionName = packageDump.match(/versionName=([^\s]+)/)?.[1] || null;
   const versionCode = packageDump.match(/versionCode=(\d+)/)?.[1] || null;
 
-  adb(serial, ['shell', 'pm', 'grant', packageName, 'android.permission.CAMERA']);
-  packageDump = adb(serial, ['shell', 'dumpsys', 'package', packageName]);
+  adbFn(serial, ['shell', 'pm', 'grant', packageName, 'android.permission.CAMERA']);
+  packageDump = adbFn(serial, ['shell', 'dumpsys', 'package', packageName]);
   const cameraPermissionGranted = /android\.permission\.CAMERA:\s*granted=true/.test(packageDump);
   if (!cameraPermissionGranted) {
     throw new Error('CAMERA runtime permission is not granted after pm grant');
   }
 
-  adb(serial, ['shell', 'am', 'force-stop', packageName]);
-  adb(serial, [
+  adbFn(serial, ['shell', 'am', 'force-stop', packageName]);
+  adbFn(serial, [
     'shell',
     'monkey',
     '-p',
@@ -133,39 +132,46 @@ export async function collectPhysicalAndroidEvidence({
     '1',
   ]);
 
-  const scanButton = await waitFor(async () => boundsCenter(uiDump(serial), 'Scan QR'), 15000, 750);
+  const scanButton = await waitFor(
+    async () => boundsCenter(uiDump(serial), 'Scan QR'),
+    15000,
+    750,
+    sleepFn,
+  );
   if (!scanButton) throw new Error('Could not locate the File QR "Scan QR" control with UIAutomator');
 
-  adb(serial, ['shell', 'input', 'tap', String(scanButton.x), String(scanButton.y)]);
+  adbFn(serial, ['shell', 'input', 'tap', String(scanButton.x), String(scanButton.y)]);
 
   const appPid = await waitFor(
-    async () => adb(serial, ['shell', 'pidof', packageName], { allowFailure: true }),
+    async () => adbFn(serial, ['shell', 'pidof', packageName], { allowFailure: true }),
     10000,
+    500,
+    sleepFn,
   );
   if (!appPid) throw new Error('File QR process is not running after launching the native scanner');
 
   const cameraOwnerObserved = Boolean(await waitFor(async () => {
-    const cameraDump = adb(serial, ['shell', 'dumpsys', 'media.camera']);
+    const cameraDump = adbFn(serial, ['shell', 'dumpsys', 'media.camera']);
     return cameraDump.includes(packageName) || new RegExp(`\\b${String(appPid).trim()}\\b`).test(cameraDump);
-  }, 15000, 750));
+  }, 15000, 750, sleepFn));
 
   if (!cameraOwnerObserved) {
     throw new Error('Physical camera service never reported File QR as an active camera client');
   }
 
-  adb(serial, ['shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+  adbFn(serial, ['shell', 'input', 'keyevent', 'KEYCODE_BACK']);
 
   const appRecovered = Boolean(await waitFor(async () => {
-    const pid = adb(serial, ['shell', 'pidof', packageName], { allowFailure: true });
+    const pid = adbFn(serial, ['shell', 'pidof', packageName], { allowFailure: true });
     if (!pid) return false;
     return Boolean(boundsCenter(uiDump(serial), 'Scan QR'));
-  }, 12000, 750));
+  }, 12000, 750, sleepFn));
 
   if (!appRecovered) {
     throw new Error('File QR did not recover to its receive UI after scanner cancellation');
   }
 
-  adb(serial, ['shell', 'am', 'force-stop', packageName], { allowFailure: true });
+  adbFn(serial, ['shell', 'am', 'force-stop', packageName], { allowFailure: true });
 
   const evidence = {
     schemaVersion: 1,
