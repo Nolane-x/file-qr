@@ -38,6 +38,25 @@ async function requestTurn(code) {
   return { response, body: await readJson(response) };
 }
 
+async function deleteManagedTurnKey(uid) {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/calls/turn_keys/${encodeURIComponent(uid)}`,
+    {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${callsApiToken}` },
+    },
+  );
+  const body = await readJson(response);
+  if (!response.ok || body?.success !== true) {
+    const messages = Array.isArray(body?.errors)
+      ? body.errors.map((entry) => String(entry?.message || '')).filter(Boolean).join('; ')
+      : '';
+    throw new Error(
+      `Cloudflare TURN key rollback failed: HTTP ${response.status}${messages ? ` (${messages})` : ''}`,
+    );
+  }
+}
+
 async function createManagedTurnKey() {
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/calls/turn_keys`,
@@ -63,7 +82,18 @@ async function createManagedTurnKey() {
 
   const uid = String(body?.result?.uid || '');
   const key = String(body?.result?.key || '');
-  if (!/^[A-Za-z0-9_-]{32}$/.test(uid) || key.length !== 64) {
+  const validUid = /^[A-Za-z0-9_-]{32}$/.test(uid);
+  if (!validUid || key.length !== 64) {
+    if (validUid) {
+      try {
+        await deleteManagedTurnKey(uid);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [new Error('Cloudflare TURN key creation returned invalid key material'), rollbackError],
+          'Cloudflare TURN key creation was invalid and rollback was incomplete',
+        );
+      }
+    }
     throw new Error('Cloudflare TURN key creation returned invalid key material');
   }
   return { uid, key };
@@ -96,6 +126,25 @@ async function putWorkerSecrets(secrets) {
   });
 }
 
+async function rollbackTurnBootstrap(uid) {
+  const rollbackErrors = [];
+  try {
+    await putWorkerSecrets({
+      TURN_KEY_ID: null,
+      TURN_KEY_API_TOKEN: null,
+    });
+  } catch (error) {
+    rollbackErrors.push(new Error(`Worker TURN secret rollback failed: ${error.message}`));
+  }
+
+  try {
+    await deleteManagedTurnKey(uid);
+  } catch (error) {
+    rollbackErrors.push(error);
+  }
+  return rollbackErrors;
+}
+
 let code = await allocateSession();
 let turn = await requestTurn(code);
 if (turn.response.ok) {
@@ -118,22 +167,37 @@ const { uid, key } = await createManagedTurnKey();
 process.stdout.write(`::add-mask::${uid}\n`);
 process.stdout.write(`::add-mask::${key}\n`);
 
-await putWorkerSecrets({
-  TURN_KEY_ID: uid,
-  TURN_KEY_API_TOKEN: key,
-});
+try {
+  await putWorkerSecrets({
+    TURN_KEY_ID: uid,
+    TURN_KEY_API_TOKEN: key,
+  });
 
-for (let attempt = 1; attempt <= 15; attempt += 1) {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  code = await allocateSession();
-  turn = await requestTurn(code);
-  if (turn.response.ok) {
-    console.log('Production TURN bootstrap verified: short-lived credentials are now available.');
-    process.exit(0);
+  let verified = false;
+  for (let attempt = 1; attempt <= 15; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    code = await allocateSession();
+    turn = await requestTurn(code);
+    if (turn.response.ok) {
+      verified = true;
+      break;
+    }
+    if (turn.response.status !== 404 || turn.body?.error !== 'turn-not-configured') {
+      throw new Error(`Production TURN verification failed: HTTP ${turn.response.status}`);
+    }
   }
-  if (turn.response.status !== 404 || turn.body?.error !== 'turn-not-configured') {
-    throw new Error(`Production TURN verification failed: HTTP ${turn.response.status}`);
+
+  if (!verified) {
+    throw new Error('Production TURN secrets were written but the credentials endpoint remained unconfigured');
   }
+  console.log('Production TURN bootstrap verified: short-lived credentials are now available.');
+} catch (error) {
+  const rollbackErrors = await rollbackTurnBootstrap(uid);
+  if (rollbackErrors.length) {
+    throw new AggregateError(
+      [error, ...rollbackErrors],
+      'Production TURN bootstrap failed and rollback was incomplete',
+    );
+  }
+  throw error;
 }
-
-throw new Error('Production TURN secrets were written but the credentials endpoint remained unconfigured');
