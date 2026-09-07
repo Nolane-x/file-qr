@@ -41,3 +41,11 @@ test('sender signaling reconnect schedules another retry only after reconnecting
   assert.match(main, /finally\s*\{\s*current\.reconnecting = false;\s*\}/);
   assert.match(main, /if \(retrySignal && leaseOpen\(\)\) scheduleSenderSignalReconnect\(\)/);
 });
+
+test('each WebRTC attempt owns one-shot ICE recovery and transport diagnostics', () => {
+  assert.match(main, /createIceRecoveryController/);
+  assert.match(main, /detectSelectedCandidateType/);
+  assert.match(main, /iceRecovery/);
+  assert.match(main, /handleState\(state\)/);
+  assert.match(main, /Direct|Relay|Secure P2P/);
+});
