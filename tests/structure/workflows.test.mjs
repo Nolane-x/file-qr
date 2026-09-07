@@ -14,6 +14,24 @@ test('web deployment uses Cloudflare Workers static assets with production smoke
   assert.ok(!yml.includes('actions/deploy-pages@v4'));
 });
 
+test('GitHub Pages mirror keeps repo base isolated from Cloudflare root build', () => {
+  const workflowUrl = new URL('../../.github/workflows/github-pages.yml', import.meta.url);
+  assert.ok(fs.existsSync(workflowUrl), 'GitHub Pages mirror workflow should exist');
+  const yml = fs.readFileSync(workflowUrl, 'utf8');
+  const vite = read('../../apps/web/vite.config.js');
+  const cloudflare = read('../../.github/workflows/pages.yml');
+  assert.ok(yml.includes('actions/configure-pages@v6'));
+  assert.ok(yml.includes('actions/upload-pages-artifact@v5'));
+  assert.ok(yml.includes('actions/deploy-pages@v5'));
+  assert.ok(yml.includes('pages: write'));
+  assert.ok(yml.includes('id-token: write'));
+  assert.ok(yml.includes('VITE_BASE: /file-qr/'));
+  assert.ok(yml.includes('VITE_SIGNALING_ORIGIN:'));
+  assert.ok(yml.includes('https://file-qr-signaling.nolane-file.workers.dev'));
+  assert.ok(vite.includes("base: process.env.VITE_BASE || '/'"));
+  assert.ok(!cloudflare.includes('VITE_BASE: /file-qr/'));
+});
+
 test('web worker configuration publishes the Vite dist directory as static assets', () => {
   const configUrl = new URL('../../apps/web/wrangler.jsonc', import.meta.url);
   assert.ok(fs.existsSync(configUrl));
