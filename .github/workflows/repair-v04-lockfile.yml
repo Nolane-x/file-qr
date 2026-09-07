@@ -1,0 +1,50 @@
+name: Repair v0.4 lockfile
+
+on:
+  push:
+    branches: [feat/v0.4-session-reliability]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]' && github.event.head_commit.message != 'chore: remove temporary lockfile repair workflow'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/v0.4-session-reliability
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Regenerate lockfile metadata only
+        shell: bash
+        run: |
+          cp package-lock.json /tmp/package-lock.before.json
+          npm install --package-lock-only --ignore-scripts
+          node <<'NODE'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const before = JSON.parse(fs.readFileSync('/tmp/package-lock.before.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          assert.equal(after.version, '0.4.0');
+          assert.equal(after.packages?.['']?.version, '0.4.0');
+          delete before.version;
+          delete after.version;
+          delete before.packages[''].version;
+          delete after.packages[''].version;
+          assert.deepStrictEqual(after, before, 'npm changed dependency graph while repairing release metadata');
+          NODE
+      - name: Commit repaired lockfile
+        shell: bash
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'package-lock.json already aligned.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'chore: align v0.4 package lock metadata'
+          git push origin HEAD:feat/v0.4-session-reliability
