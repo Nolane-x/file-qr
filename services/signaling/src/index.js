@@ -90,6 +90,7 @@ export class SessionRoom extends DurableObject {
       ...session,
       attemptCounter: 0,
       activeAttemptId: null,
+      readyAttemptId: null,
     });
     await this.ctx.storage.setAlarm(session.expiresAt);
     return json({ ok: true }, { status: 201 });
@@ -116,7 +117,12 @@ export class SessionRoom extends DurableObject {
     let attemptId = null;
     if (role === 'receiver') {
       attemptId = Number(session.attemptCounter || 0) + 1;
-      session = { ...session, attemptCounter: attemptId, activeAttemptId: attemptId };
+      session = {
+        ...session,
+        attemptCounter: attemptId,
+        activeAttemptId: attemptId,
+        readyAttemptId: null,
+      };
       await this.ctx.storage.put('session', session);
     }
 
@@ -131,6 +137,14 @@ export class SessionRoom extends DurableObject {
       expiresAt: session.expiresAt,
       ...(attemptId ? { attemptId } : {}),
     }));
+
+    if (
+      role === 'sender'
+      && Number.isInteger(session.readyAttemptId)
+      && session.readyAttemptId === session.activeAttemptId
+    ) {
+      server.send(JSON.stringify({ type: 'peer-ready', attemptId: session.activeAttemptId }));
+    }
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -148,11 +162,13 @@ export class SessionRoom extends DurableObject {
     const role = attachment.role;
     if (role !== 'sender' && role !== 'receiver') return;
 
-    const session = await this.ctx.storage.get('session');
+    let session = await this.ctx.storage.get('session');
     if (!session) return;
 
     if (payload?.type === 'attempt-ready' && role === 'receiver') {
       if (!Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId || attachment.attemptId !== session.activeAttemptId) return;
+      session = { ...session, readyAttemptId: session.activeAttemptId };
+      await this.ctx.storage.put('session', session);
       if (this.ctx.getWebSockets('sender').length) {
         this.#broadcast({ type: 'peer-ready', attemptId: session.activeAttemptId });
       }
@@ -175,7 +191,11 @@ export class SessionRoom extends DurableObject {
     if (role === 'receiver' && Number.isInteger(attemptId)) {
       const session = await this.ctx.storage.get('session');
       if (session?.activeAttemptId === attemptId) {
-        await this.ctx.storage.put('session', { ...session, activeAttemptId: null });
+        await this.ctx.storage.put('session', {
+          ...session,
+          activeAttemptId: null,
+          readyAttemptId: null,
+        });
       }
     }
     try { ws.close(code, reason); } catch { /* already closed */ }
