@@ -1,6 +1,6 @@
 [package]
 name = "file-qr"
-version = "0.2.0"
+version = "0.3.0"
 description = "Direct and offline optical file transfer for Windows and Android"
 authors = ["Nolane-x"]
 edition = "2021"
