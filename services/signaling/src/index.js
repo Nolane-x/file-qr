@@ -28,6 +28,36 @@ function roomStub(env, code) {
   return env.SESSIONS.get(env.SESSIONS.idFromName(compactReceiveCode(code)));
 }
 
+function turnConfigured(env) {
+  return typeof env.TURN_KEY_ID === 'string' && env.TURN_KEY_ID.length > 0
+    && typeof env.TURN_KEY_API_TOKEN === 'string' && env.TURN_KEY_API_TOKEN.length > 0;
+}
+
+function turnCredentialTtlSeconds(env) {
+  const configured = Number(env.TURN_CREDENTIAL_TTL_SECONDS || 3600);
+  if (!Number.isFinite(configured)) return 3600;
+  return Math.min(172800, Math.max(300, Math.floor(configured)));
+}
+
+async function generateTurnCredentials(env) {
+  const ttl = turnCredentialTtlSeconds(env);
+  const response = await fetch(
+    `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ttl }),
+    },
+  );
+  if (!response.ok) return null;
+  const body = await response.json();
+  if (!Array.isArray(body?.iceServers) || body.iceServers.length === 0) return null;
+  return { iceServers: body.iceServers, expiresAt: Date.now() + ttl * 1000 };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -35,6 +65,27 @@ export default {
 
     if (url.pathname === '/health') {
       return json({ ok: true, service: 'file-qr-signaling', ttlMs: Number(env.SESSION_TTL_MS || SESSION_TTL_MS) });
+    }
+
+    if (url.pathname === '/v1/turn-credentials' && request.method === 'POST') {
+      if (!turnConfigured(env)) return json({ error: 'turn-not-configured' }, { status: 404 });
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'invalid-request' }, { status: 400 });
+      }
+      const code = body?.code;
+      if (!isReceiveCode(code)) return json({ error: 'session-not-found' }, { status: 404 });
+
+      const authorization = await roomStub(env, code).fetch('https://room.internal/turn-authorize', { method: 'POST' });
+      if (!authorization.ok) {
+        return json({ error: 'session-expired' }, { status: authorization.status === 410 ? 410 : 404 });
+      }
+
+      const credentials = await generateTurnCredentials(env);
+      if (!credentials) return json({ error: 'turn-provider-unavailable' }, { status: 502 });
+      return json(credentials);
     }
 
     if (url.pathname === '/v1/sessions' && request.method === 'POST') {
@@ -75,6 +126,7 @@ export class SessionRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === '/init' && request.method === 'POST') return this.#init(request);
+    if (url.pathname === '/turn-authorize' && request.method === 'POST') return this.#authorizeTurn();
     if (url.pathname.endsWith('/connect') && request.method === 'GET') return this.#connect(request);
     return json({ error: 'not-found' }, { status: 404 });
   }
@@ -94,6 +146,12 @@ export class SessionRoom extends DurableObject {
     });
     await this.ctx.storage.setAlarm(session.expiresAt);
     return json({ ok: true }, { status: 201 });
+  }
+
+  async #authorizeTurn() {
+    const session = await this.ctx.storage.get('session');
+    if (!session || Date.now() >= session.expiresAt) return json({ error: 'session-expired' }, { status: 410 });
+    return json({ ok: true, expiresAt: session.expiresAt });
   }
 
   async #connect(request) {
