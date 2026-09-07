@@ -5,15 +5,18 @@ import fs from 'node:fs';
 const workflowUrl = new URL('../../.github/workflows/turn-bootstrap.yml', import.meta.url);
 const bootstrapUrl = new URL('../../scripts/bootstrap-production-turn.mjs', import.meta.url);
 
-test('production TURN bootstrap is manual-only and refuses non-main refs before checkout', () => {
+test('production TURN bootstrap runs only from trusted main events and refuses PR code', () => {
   assert.ok(fs.existsSync(workflowUrl), 'trusted TURN bootstrap workflow must exist');
   const workflow = fs.readFileSync(workflowUrl, 'utf8');
 
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(
+    workflow,
+    /push:\s*\n\s{4}branches:\s*\[main\][\s\S]*paths:[\s\S]*\.github\/workflows\/turn-bootstrap\.yml[\s\S]*scripts\/bootstrap-production-turn\.mjs/,
+  );
   assert.doesNotMatch(workflow, /pull_request:/);
   assert.doesNotMatch(workflow, /pull_request_target:/);
   assert.doesNotMatch(workflow, /workflow_run:/);
-  assert.doesNotMatch(workflow, /\n\s{2}push:/);
   assert.match(workflow, /permissions:\s*\n\s{2}contents:\s*read/);
   assert.match(
     workflow,
