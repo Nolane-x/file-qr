@@ -34,3 +34,10 @@ test('signaling client captures connected handshake before callers attach later 
   assert.match(signaling, /fileQrConnected/);
   assert.match(signaling, /message\.type === 'connected'/);
 });
+
+test('sender signaling reconnect schedules another retry only after reconnecting flag is cleared', () => {
+  assert.match(main, /let retrySignal = false/);
+  assert.match(main, /retrySignal = true/);
+  assert.match(main, /finally\s*\{\s*current\.reconnecting = false;\s*\}/);
+  assert.match(main, /if \(retrySignal && leaseOpen\(\)\) scheduleSenderSignalReconnect\(\)/);
+});
