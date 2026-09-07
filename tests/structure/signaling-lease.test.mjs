@@ -22,6 +22,17 @@ test('receiver websocket attachment owns its attempt and close releases only tha
   assert.match(source, /activeAttemptId[\s\S]*===\s*attemptId/);
 });
 
+test('receiver readiness is persisted so sender reconnect cannot miss peer-ready', () => {
+  assert.match(source, /readyAttemptId/);
+  assert.match(source, /attempt-ready[\s\S]*readyAttemptId/);
+  assert.match(source, /role === 'sender'[\s\S]*readyAttemptId[\s\S]*activeAttemptId[\s\S]*peer-ready/);
+});
+
+test('receiver close clears both active and ready attempt identity', () => {
+  assert.match(source, /activeAttemptId:\s*null/);
+  assert.match(source, /readyAttemptId:\s*null/);
+});
+
 test('exact lease expiry remains server-side', () => {
   assert.match(source, /Date\.now\(\)\s*>=\s*session\.expiresAt/);
   assert.match(source, /setAlarm\(session\.expiresAt\)/);
