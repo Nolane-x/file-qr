@@ -54,3 +54,15 @@ test('TURN bootstrap script is fail-closed, masks generated key material, and wr
   assert.match(script, /file-qr-signaling-production/);
   assert.ok(!/console\.log\([^\n]*(?:TURN_KEY_API_TOKEN|result\.key|turnKey)/.test(script));
 });
+
+test('TURN bootstrap rolls back Worker secrets and the newly-created Calls key when activation fails', () => {
+  assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
+  const script = fs.readFileSync(bootstrapUrl, 'utf8');
+
+  assert.match(script, /async function deleteManagedTurnKey/);
+  assert.match(script, /method:\s*['"]DELETE['"]/);
+  assert.match(script, /TURN_KEY_ID:\s*null/);
+  assert.match(script, /TURN_KEY_API_TOKEN:\s*null/);
+  assert.match(script, /await\s+deleteManagedTurnKey\(uid\)/);
+  assert.match(script, /rollback/i);
+});
