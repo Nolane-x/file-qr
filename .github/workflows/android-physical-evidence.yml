@@ -1,0 +1,90 @@
+name: Android Physical Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag containing FileQR-Android-arm64.apk
+        required: true
+        default: v0.4.0
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  physical-camera:
+    runs-on: [self-hosted, linux, file-qr-android-device]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Verify Android lab prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v adb
+          command -v gh
+          adb version
+
+      - name: Download exact Android release artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          rm -rf release
+          mkdir -p release
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'FileQR-Android-arm64.apk' \
+            --dir release
+          test -s release/FileQR-Android-arm64.apk
+
+      - name: Collect physical Android camera evidence
+        env:
+          FILE_QR_APK: release/FileQR-Android-arm64.apk
+          FILE_QR_ANDROID_EVIDENCE_PATH: android-physical-evidence.json
+        run: node scripts/collect-android-physical-evidence.mjs
+
+      - name: Validate sanitized evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const x = JSON.parse(fs.readFileSync("android-physical-evidence.json", "utf8"));
+            if (x?.cameraPermissionGranted !== true) process.exit(1);
+            if (x?.cameraOwnerObserved !== true) process.exit(1);
+            if (x?.appRecovered !== true) process.exit(1);
+            if (x?.cameraImageryCaptured !== false) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(x?.device?.deviceSerialHash || "")) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(x?.device?.buildFingerprintHash || "")) process.exit(1);
+            console.log(`Physical Android camera evidence: PASS (${x.device.manufacturer} ${x.device.model}, Android ${x.device.androidRelease})`);
+          '
+
+      - name: Publish physical Android evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-physical-evidence-${{ github.run_id }}
+          path: android-physical-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize physical evidence
+        shell: bash
+        run: |
+          {
+            echo '### File QR physical Android evidence'
+            echo
+            echo 'Physical ADB device (emulators rejected): PASS'
+            echo 'CAMERA permission on installed File QR: PASS'
+            echo 'Native Scan QR control launched physical camera service: PASS'
+            echo 'Scanner cancellation returned to File QR UI: PASS'
+            echo 'Camera imagery captured by CI: NO'
+            echo 'Evidence artifact: android-physical-evidence.json'
+          } >> "$GITHUB_STEP_SUMMARY"
