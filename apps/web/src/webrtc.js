@@ -1,4 +1,4 @@
-import { chunkRanges, encodeControlMessage, decodeControlMessage, DEFAULT_CHUNK_SIZE } from '../../../packages/core/transfer.js';
+import { chunkRanges, encodeControlMessage, decodeControlMessage, DEFAULT_CHUNK_SIZE, validateResumeOffset } from '../../../packages/core/transfer.js';
 
 export function defaultIceServers() {
   return [
@@ -41,18 +41,22 @@ export async function sendByteChunks(bytes, channel, options = {}) {
 
 export async function streamFileOverChannel(file, channel, options = {}) {
   const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
-  channel.send(encodeControlMessage('meta', { name: file.name, size: file.size, type: file.type || 'application/octet-stream', chunkSize }));
-  let sent = 0;
-  for (const [start, end] of chunkRanges(file.size, chunkSize)) {
-    if (channel.bufferedAmount > (options.highWaterMark ?? 4 * 1024 * 1024)) {
-      await waitForBufferedAmountLow(channel, options.highWaterMark ?? 4 * 1024 * 1024);
+  const highWaterMark = options.highWaterMark ?? 4 * 1024 * 1024;
+  const offset = validateResumeOffset(options.offset ?? 0, file.size);
+  const fileId = String(options.fileId || '');
+  if (!fileId) throw new Error('fileId is required for resumable transfer');
+
+  for (const [relativeStart, relativeEnd] of chunkRanges(file.size - offset, chunkSize)) {
+    if (channel.bufferedAmount > highWaterMark) {
+      await waitForBufferedAmountLow(channel, highWaterMark);
     }
+    const start = offset + relativeStart;
+    const end = offset + relativeEnd;
     const buffer = await file.slice(start, end).arrayBuffer();
     channel.send(buffer);
-    sent = end;
-    options.onProgress?.(sent, file.size);
+    options.onProgress?.(end, file.size);
   }
-  channel.send(encodeControlMessage('complete', { size: file.size }));
+  channel.send(encodeControlMessage('transfer-complete', { fileId, size: file.size }));
 }
 
 export function createPeerConnection({ iceServers = defaultIceServers() } = {}) {
