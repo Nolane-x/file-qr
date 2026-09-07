@@ -24,7 +24,7 @@ jobs:
         run: npm install
       - name: Install browser harness
         run: |
-          npm install --no-save --package-lock=false playwright@1.55.0
+          npm install --no-save --package-lock=false playwright@1.63.0
           npx playwright install --with-deps chromium
       - name: Start local signaling and web runtimes
         shell: bash
