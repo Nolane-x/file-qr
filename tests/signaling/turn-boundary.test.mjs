@@ -5,6 +5,7 @@ import { defaultIceServers, fetchOptionalIceServers } from '../../apps/web/src/w
 
 const signaling = fs.readFileSync(new URL('../../services/signaling/src/index.js', import.meta.url), 'utf8');
 const wrangler = fs.readFileSync(new URL('../../services/signaling/wrangler.jsonc', import.meta.url), 'utf8');
+const main = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
 
 test('optional TURN fetch treats unconfigured signaling as direct-mode success', async () => {
   let requestedUrl = '';
@@ -57,4 +58,11 @@ test('signaling TURN boundary is lease-bound and keeps long-lived credentials se
   assert.ok(!wrangler.includes('TURN_KEY_API_TOKEN'));
   assert.ok(!wrangler.includes('TURN_KEY_ID'));
   assert.ok(!/Bearer\s+[A-Za-z0-9_-]{20,}/.test(signaling));
+});
+
+test('web runtime merges optional TURN with default STUN before creating each attempt peer', () => {
+  assert.match(main, /fetchOptionalIceServers/);
+  assert.match(main, /defaultIceServers/);
+  assert.match(main, /resolveIceServers/);
+  assert.match(main, /createPeerConnection\(\{\s*iceServers\s*\}\)/);
 });
