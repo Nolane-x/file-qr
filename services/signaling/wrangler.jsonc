@@ -12,6 +12,7 @@
     "SessionRoom": { "type": "durable-object", "storage": "sqlite" }
   },
   "vars": {
-    "SESSION_TTL_MS": "600000"
+    "SESSION_TTL_MS": "600000",
+    "TURN_CREDENTIAL_TTL_SECONDS": "3600"
   }
 }
