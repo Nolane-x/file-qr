@@ -4,19 +4,21 @@
 
 File QR is a deliberately small file-transfer product for **Windows and Android**. The browser path sends file bytes through an encrypted WebRTC data channel; the native app adds an experimental offline QR Stream path for situations with no usable network.
 
-## v0.2 product contract
+## v0.3 product contract
 
 - **Web:** drop a file → get a QR + 10-character receive code → the other Windows/Android browser can **scan the QR with its camera**, paste a File QR link/code, or type the code → WebRTC transfers the file.
-- **Native:** the same network path plus **QR Stream** for offline screen-to-camera transfer.
+- **Native:** the same network path with a unified **Scan · Paste · Type** receive flow, plus **QR Stream** for offline screen-to-camera transfer.
 - **10-minute rendezvous:** new receivers can join for exactly 600 seconds. A data channel that already opened may finish after signaling expiry.
 - **No cloud file storage:** the signaling Worker stores ephemeral rendezvous metadata only. File payloads do not enter the signaling service.
 - **No accounts, history, cloud drive, chat, or manual transport selector.**
 - Supported preview remains **Windows + Android**.
 
-## v0.2 reliability + convenience
+## v0.3 reliability + native convenience
 
 - Browser QR scanning on Android and Windows/webcam.
-- Paste receive code or File QR receive URL.
+- Native Windows reuses the existing WebView webcam scanner and receive parser.
+- Native Android uses the Tauri barcode scanner with the back camera, QR-only format filtering and an explicit camera-permission gate.
+- Native and web paste actions accept only a File QR receive code or File QR receive URL; arbitrary scanned/pasted URLs are never navigated automatically.
 - Screen Wake Lock during connecting/sending/receiving/verifying when the browser supports it.
 - Transfer throughput + ETA.
 - 30-second bounded direct-connection setup timeout instead of an indefinite connecting state.
@@ -24,7 +26,7 @@ File QR is a deliberately small file-transfer product for **Windows and Android*
 - Early ICE candidates remain buffered until the remote description exists.
 - WebRTC accepts injected ICE server configuration so short-lived TURN credentials can be added later without changing call sites.
 
-**TURN relay is not enabled in v0.2.** Some restrictive NAT/firewall combinations may still fail. A future TURN milestone must mint short-lived relay credentials server-side; a long-lived TURN secret must never be shipped in browser code.
+**TURN relay is not enabled in v0.3.** Some restrictive NAT/firewall combinations may still fail. A future TURN milestone must mint short-lived relay credentials server-side; a long-lived TURN secret must never be shipped in browser code.
 
 ## Production
 
@@ -48,7 +50,7 @@ Signaling health:
 https://file-qr-signaling.nolane-file.workers.dev/health
 ```
 
-The old `file-qr-web.nolane-file.workers.dev` deployment is intentionally not deleted by v0.2, so it can remain a temporary compatibility endpoint.
+The old `file-qr-web.nolane-file.workers.dev` deployment is intentionally not deleted by v0.3, so it can remain a temporary compatibility endpoint.
 
 ## Downloads
 
@@ -94,17 +96,17 @@ Run the native UI:
 VITE_SIGNALING_ORIGIN=https://your-worker.example.workers.dev npm --workspace @file-qr/native run tauri -- dev
 ```
 
-Tauri native builds additionally require Rust. Android builds require the Android SDK/NDK and Rust Android targets. `npm --workspace @file-qr/native run android:init` initializes the generated Android project and injects the camera manifest permission required by optical receive.
+Tauri native builds additionally require Rust. Android builds require the Android SDK/NDK and Rust Android targets. `npm --workspace @file-qr/native run android:init` initializes the generated Android project and injects the camera manifest permission required by native QR scanning and optical receive.
 
-## Web camera privacy
+## Camera + clipboard privacy
 
-Camera access is requested only after the user presses **Scan QR**. The stream is released on decode, cancel, reset, transfer start, failure, or page exit. Scanned QR strings are parsed only for a File QR receive capability; arbitrary scanned URLs are **never navigated automatically**.
+Camera access is user initiated. Web and native Windows open the WebView camera only after **Scan QR** is pressed and release it on decode, cancel, reset, transfer start, failure or page exit. Native Android invokes the Tauri barcode-scanner plugin only after **Scan QR** is pressed, requests camera permission when needed, uses the back camera and limits recognition to QR codes.
 
-Clipboard reads are also user-initiated only through the **Paste** action.
+All scanned strings pass through the same File QR receive-capability parser; arbitrary scanned URLs are **never navigated automatically**. Clipboard reads are also user initiated only through the **Paste** action.
 
 ## Offline QR Stream v0.1
 
-The optical format remains intentionally conservative in v0.2: independent repeated `FQR1` frames with sequence number, total count, CRC32 and Base64URL payload. The receiver deduplicates frames and reconstructs only when all frames are present.
+The optical format remains intentionally conservative in v0.3: independent repeated `FQR1` frames with sequence number, total count, CRC32 and Base64URL payload. The receiver deduplicates frames and reconstructs only when all frames are present.
 
 Optical send is capped at **8 MB** before the file is read into memory. Larger files should use Network mode. CRC32 detects accidental corruption but is **not** cryptographic authentication.
 
