@@ -4,15 +4,16 @@ export class SessionState {
     this.expiresAt = createdAt + ttlMs;
     this.senderToken = senderToken;
     this.senderJoined = false;
-    this.receiverJoined = false;
-    this.consumed = false;
+    this.attemptCounter = 0;
+    this.receiverAttemptId = null;
   }
 
   isExpired(now = Date.now()) { return now >= this.expiresAt; }
 
+  get receiverActive() { return this.receiverAttemptId !== null; }
+
   admit(role, token = '', now = Date.now()) {
     if (this.isExpired(now)) throw new Error('Session expired');
-    if (this.consumed) throw new Error('Session consumed');
     if (role === 'sender') {
       if (token !== this.senderToken) throw new Error('Invalid sender token');
       if (this.senderJoined) throw new Error('Sender already connected');
@@ -20,12 +21,17 @@ export class SessionState {
       return { role };
     }
     if (role === 'receiver') {
-      if (this.receiverJoined) throw new Error('Receiver already connected');
-      this.receiverJoined = true;
-      return { role };
+      if (this.receiverActive) throw new Error('Receiver already connected');
+      this.attemptCounter += 1;
+      this.receiverAttemptId = this.attemptCounter;
+      return { role, attemptId: this.receiverAttemptId };
     }
     throw new Error('Invalid role');
   }
 
-  consume() { this.consumed = true; }
+  releaseReceiver(attemptId) {
+    if (!Number.isInteger(attemptId) || this.receiverAttemptId !== attemptId) return false;
+    this.receiverAttemptId = null;
+    return true;
+  }
 }
