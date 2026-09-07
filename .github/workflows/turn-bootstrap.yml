@@ -1,0 +1,53 @@
+name: Bootstrap Production TURN
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/turn-bootstrap.yml'
+      - 'scripts/bootstrap-production-turn.mjs'
+
+concurrency:
+  group: turn-bootstrap-production-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install project dependencies
+        run: npm install
+
+      - name: Validate production TURN bootstrap credentials
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_CALLS_API_TOKEN: ${{ secrets.CLOUDFLARE_CALLS_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo '::error::Missing CLOUDFLARE_ACCOUNT_ID.'; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::Missing CLOUDFLARE_API_TOKEN for Worker secret writes.'; exit 1; }
+          test -n "$CLOUDFLARE_CALLS_API_TOKEN" || { echo '::error::Missing CLOUDFLARE_CALLS_API_TOKEN with Calls Write.'; exit 1; }
+
+      - name: Bootstrap and verify production TURN
+        shell: bash
+        env:
+          FILE_QR_SIGNALING_ORIGIN: https://file-qr-signaling.nolane-file.workers.dev
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_CALLS_API_TOKEN: ${{ secrets.CLOUDFLARE_CALLS_API_TOKEN }}
+        run: node scripts/bootstrap-production-turn.mjs
