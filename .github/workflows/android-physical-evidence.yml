@@ -14,10 +14,13 @@ permissions:
 
 jobs:
   physical-camera:
+    if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, file-qr-android-device]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
       - uses: actions/setup-node@v6
         with:
           node-version: 24
