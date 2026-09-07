@@ -1,9 +1,20 @@
-import '../../web/src/main.js';
+import '../../web/src/style.css';
 import './native.css';
 import encodeQR from 'qr';
 import { QRCanvas, frameLoop, rearCamera } from 'qr/dom.js';
 import { encodeOpticalFrames, OpticalAssembler } from '../../../packages/core/optical.js';
 import { encodeFileEnvelope, decodeFileEnvelope } from '../../../packages/core/file-envelope.js';
+import { parseReceivePayload } from '../../web/src/receive-payload.js';
+import { createAndroidBarcodeScanner } from './android-barcode.js';
+
+const nativeScanButton = document.querySelector('[data-native-scan]');
+const networkStatus = document.querySelector('[data-status]');
+const networkCodeInput = document.querySelector('[data-code-input]');
+const networkReceiveForm = document.querySelector('[data-receive-form]');
+const androidNative = /Android/i.test(navigator.userAgent);
+
+if (androidNative) nativeScanButton?.removeAttribute('data-scan-qr');
+await import('../../web/src/main.js');
 
 const networkButton = document.querySelector('[data-mode="network"]');
 const opticalButton = document.querySelector('[data-mode="optical"]');
@@ -20,6 +31,7 @@ const bar = document.querySelector('[data-optical-bar]');
 const stopButton = document.querySelector('[data-optical-stop]');
 
 let opticalSession = { stop: null, timer: null, camera: null, loop: null };
+let cancelNetworkScan = () => Promise.resolve();
 const OPTICAL_MAX_BYTES = 8 * 1024 * 1024;
 
 function setMode(mode) {
@@ -28,7 +40,12 @@ function setMode(mode) {
   opticalButton.setAttribute('aria-pressed', String(optical));
   networkPanel.hidden = optical;
   opticalPanel.hidden = !optical;
-  if (!optical) stopOptical();
+  if (optical) {
+    document.querySelector('[data-scanner-cancel]')?.click();
+    cancelNetworkScan().catch(() => {});
+  } else {
+    stopOptical();
+  }
 }
 
 function randomStreamId() {
@@ -135,6 +152,40 @@ async function startOpticalReceive() {
     }
   });
   opticalSession.loop = cancel;
+}
+
+if (androidNative && nativeScanButton && networkReceiveForm && networkCodeInput) {
+  const androidScanner = createAndroidBarcodeScanner();
+  let scanning = false;
+
+  cancelNetworkScan = async () => {
+    if (!scanning) return;
+    try { await androidScanner.cancel(); } catch { /* native scanner may already be closing */ }
+  };
+
+  nativeScanButton.addEventListener('click', async () => {
+    if (scanning) return;
+    scanning = true;
+    nativeScanButton.disabled = true;
+    if (networkStatus) networkStatus.textContent = 'Opening native QR scanner…';
+    try {
+      const payload = await androidScanner.scanQr();
+      const code = parseReceivePayload(payload);
+      if (!code) {
+        if (networkStatus) networkStatus.textContent = 'Not a File QR receive code. Scan again or type the code.';
+        networkCodeInput.focus();
+        return;
+      }
+      networkCodeInput.value = code;
+      networkReceiveForm.requestSubmit();
+    } catch (error) {
+      if (networkStatus) networkStatus.textContent = error?.message || 'Camera scanning is unavailable. Type the receive code instead.';
+      networkCodeInput.focus();
+    } finally {
+      scanning = false;
+      nativeScanButton.disabled = false;
+    }
+  });
 }
 
 networkButton.addEventListener('click', () => setMode('network'));
