@@ -9,6 +9,118 @@ export function defaultIceServers() {
 
 export const DEFAULT_ICE_SERVERS = defaultIceServers();
 
+export function createIceRecoveryController(peer, renegotiate, options = {}) {
+  if (!peer || typeof peer.restartIce !== 'function') throw new TypeError('peer.restartIce is required');
+  if (typeof renegotiate !== 'function') throw new TypeError('renegotiate must be a function');
+
+  const graceMs = Number.isFinite(options.graceMs) ? Math.max(0, options.graceMs) : 5_000;
+  const schedule = options.schedule || ((fn, ms) => setTimeout(fn, ms));
+  const cancel = options.cancel || ((id) => clearTimeout(id));
+  let graceTimer = null;
+  let restartUsed = false;
+  let exhausted = false;
+  let disposed = false;
+
+  function clearGraceTimer() {
+    if (graceTimer === null) return;
+    cancel(graceTimer);
+    graceTimer = null;
+  }
+
+  async function hardFailure() {
+    if (disposed) return 'disposed';
+    clearGraceTimer();
+    if (restartUsed) {
+      if (!exhausted) {
+        exhausted = true;
+        options.onExhausted?.();
+      }
+      return 'exhausted';
+    }
+
+    restartUsed = true;
+    peer.restartIce();
+    await renegotiate();
+    return 'restarted';
+  }
+
+  async function handleState(state) {
+    if (disposed) return 'disposed';
+    if (state === 'connected' || state === 'completed') {
+      clearGraceTimer();
+      return 'connected';
+    }
+    if (state === 'disconnected') {
+      if (graceTimer === null && !restartUsed) {
+        graceTimer = schedule(() => {
+          graceTimer = null;
+          Promise.resolve(hardFailure()).catch((error) => options.onError?.(error));
+        }, graceMs);
+      }
+      return 'waiting';
+    }
+    if (state === 'failed') return hardFailure();
+    if (state === 'closed') {
+      clearGraceTimer();
+      return 'closed';
+    }
+    return 'ignored';
+  }
+
+  return {
+    handleState,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      clearGraceTimer();
+    },
+    get restartUsed() { return restartUsed; },
+  };
+}
+
+function statsValues(report) {
+  if (!report) return [];
+  if (typeof report.values === 'function') return [...report.values()];
+  if (typeof report.forEach === 'function') {
+    const values = [];
+    report.forEach((value) => values.push(value));
+    return values;
+  }
+  return Object.values(report);
+}
+
+function statById(report, id) {
+  if (!id || !report) return null;
+  if (typeof report.get === 'function') return report.get(id) || null;
+  return statsValues(report).find((entry) => entry?.id === id) || null;
+}
+
+export async function detectSelectedCandidateType(peer) {
+  if (!peer || typeof peer.getStats !== 'function') return 'unknown';
+  let report;
+  try {
+    report = await peer.getStats();
+  } catch {
+    return 'unknown';
+  }
+
+  const values = statsValues(report);
+  const transport = values.find((entry) => entry?.type === 'transport' && entry.selectedCandidatePairId);
+  let pair = statById(report, transport?.selectedCandidatePairId);
+  if (!pair) {
+    pair = values.find((entry) => entry?.type === 'candidate-pair' && (
+      entry.selected === true || (entry.nominated === true && entry.state === 'succeeded')
+    ));
+  }
+  if (!pair) return 'unknown';
+
+  const local = statById(report, pair.localCandidateId);
+  const remote = statById(report, pair.remoteCandidateId);
+  if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return 'relay';
+  if (local?.candidateType || remote?.candidateType) return 'direct';
+  return 'unknown';
+}
+
 export function waitForBufferedAmountLow(channel, threshold) {
   if (channel.readyState !== 'open') return Promise.reject(new Error('Data channel is not open'));
   if (channel.bufferedAmount <= threshold) return Promise.resolve();
