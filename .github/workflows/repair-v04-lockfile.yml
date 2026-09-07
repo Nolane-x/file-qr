@@ -1,4 +1,4 @@
-name: Repair v0.4 lockfile
+name: Repair v0.4 branch hygiene
 
 on:
   push:
@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: v04-one-shot-repair
+  cancel-in-progress: true
 
 jobs:
   repair:
@@ -18,6 +22,37 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+      - name: Patch sender attempt reservation atomically
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const path = 'apps/web/src/main.js';
+          let source = fs.readFileSync(path, 'utf8');
+
+          function replaceOnce(before, after, label) {
+            const first = source.indexOf(before);
+            assert.notEqual(first, -1, `${label}: expected source snippet not found`);
+            assert.equal(source.indexOf(before, first + 1), -1, `${label}: source snippet appeared more than once`);
+            source = source.slice(0, first) + after + source.slice(first + before.length);
+          }
+
+          replaceOnce(
+            `async function cleanupAttempt({ discardPartial = false } = {}) {\n  const attempt = current.attempt;\n  current.attempt = freshAttempt();`,
+            `async function cleanupAttempt({ discardPartial = false, nextAttempt = null } = {}) {\n  const attempt = current.attempt;\n  current.attempt = nextAttempt || freshAttempt();`,
+            'cleanupAttempt reservation',
+          );
+
+          replaceOnce(
+            `async function startSenderAttempt(attemptId) {\n  if (current.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;\n  await cleanupAttempt();\n\n  const socket = current.socket;\n  if (!socket) return;\n  const iceServers = await resolveIceServers();\n  if (current.role !== 'sender' || current.socket !== socket || !leaseOpen()) return;\n  const peer = createPeerConnection({ iceServers });\n  const channel = createTransferChannel(peer);\n  const candidateBuffer = createRemoteCandidateBuffer(peer);\n  current.attempt = { ...freshAttempt(), id: attemptId, peer, channel, candidateBuffer };`,
+            `async function startSenderAttempt(attemptId) {\n  if (current.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;\n  if (current.attempt.id === attemptId) return;\n  await cleanupAttempt({ nextAttempt: { ...freshAttempt(), id: attemptId } });\n  if (current.attempt.id !== attemptId) return;\n\n  const socket = current.socket;\n  if (!socket) {\n    if (current.attempt.id === attemptId) current.attempt = freshAttempt();\n    return;\n  }\n  const iceServers = await resolveIceServers();\n  if (current.attempt.id !== attemptId || current.socket !== socket || !leaseOpen()) return;\n  const peer = createPeerConnection({ iceServers });\n  const channel = createTransferChannel(peer);\n  const candidateBuffer = createRemoteCandidateBuffer(peer);\n  current.attempt = { ...current.attempt, peer, channel, candidateBuffer };`,
+            'startSenderAttempt arbitration',
+          );
+
+          fs.writeFileSync(path, source);
+          NODE
+          node --test tests/structure/web-lease-runtime.test.mjs
       - name: Regenerate lockfile metadata only
         shell: bash
         run: |
@@ -36,15 +71,18 @@ jobs:
           delete after.packages[''].version;
           assert.deepStrictEqual(after, before, 'npm changed dependency graph while repairing release metadata');
           NODE
-      - name: Commit repaired lockfile if needed
+      - name: Verify repaired branch before commit
+        run: |
+          node --test tests/structure/web-lease-runtime.test.mjs tests/structure/version-alignment.test.mjs tests/structure/version.test.mjs
+      - name: Commit one-shot repairs if needed
         shell: bash
         run: |
-          if git diff --quiet -- package-lock.json; then
-            echo 'package-lock.json already aligned.'
+          if git diff --quiet -- apps/web/src/main.js package-lock.json; then
+            echo 'Runtime and lockfile already aligned.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package-lock.json
-          git commit -m 'chore: align v0.4 package lock metadata'
+          git add apps/web/src/main.js package-lock.json
+          git commit -m 'fix: protect sender attempt replay and align v0.4 lockfile'
           git push origin HEAD:feat/v0.4-session-reliability
