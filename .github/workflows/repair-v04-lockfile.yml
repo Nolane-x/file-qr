@@ -22,37 +22,190 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Patch sender attempt reservation atomically
+      - name: Patch sender attempt arbitration and coordinated ICE recovery
         shell: bash
         run: |
           node <<'NODE'
           const fs = require('node:fs');
           const assert = require('node:assert/strict');
-          const path = 'apps/web/src/main.js';
-          let source = fs.readFileSync(path, 'utf8');
 
-          function replaceOnce(before, after, label) {
+          function replaceOnce(source, before, after, label) {
             const first = source.indexOf(before);
             assert.notEqual(first, -1, `${label}: expected source snippet not found`);
             assert.equal(source.indexOf(before, first + 1), -1, `${label}: source snippet appeared more than once`);
-            source = source.slice(0, first) + after + source.slice(first + before.length);
+            return source.slice(0, first) + after + source.slice(first + before.length);
           }
 
-          replaceOnce(
-            `async function cleanupAttempt({ discardPartial = false } = {}) {\n  const attempt = current.attempt;\n  current.attempt = freshAttempt();`,
-            `async function cleanupAttempt({ discardPartial = false, nextAttempt = null } = {}) {\n  const attempt = current.attempt;\n  current.attempt = nextAttempt || freshAttempt();`,
-            'cleanupAttempt reservation',
-          );
+          const mainPath = 'apps/web/src/main.js';
+          let main = fs.readFileSync(mainPath, 'utf8');
 
-          replaceOnce(
-            `async function startSenderAttempt(attemptId) {\n  if (current.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;\n  await cleanupAttempt();\n\n  const socket = current.socket;\n  if (!socket) return;\n  const iceServers = await resolveIceServers();\n  if (current.role !== 'sender' || current.socket !== socket || !leaseOpen()) return;\n  const peer = createPeerConnection({ iceServers });\n  const channel = createTransferChannel(peer);\n  const candidateBuffer = createRemoteCandidateBuffer(peer);\n  current.attempt = { ...freshAttempt(), id: attemptId, peer, channel, candidateBuffer };`,
-            `async function startSenderAttempt(attemptId) {\n  if (current.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;\n  if (current.attempt.id === attemptId) return;\n  await cleanupAttempt({ nextAttempt: { ...freshAttempt(), id: attemptId } });\n  if (current.attempt.id !== attemptId) return;\n\n  const socket = current.socket;\n  if (!socket) {\n    if (current.attempt.id === attemptId) current.attempt = freshAttempt();\n    return;\n  }\n  const iceServers = await resolveIceServers();\n  if (current.attempt.id !== attemptId || current.socket !== socket || !leaseOpen()) return;\n  const peer = createPeerConnection({ iceServers });\n  const channel = createTransferChannel(peer);\n  const candidateBuffer = createRemoteCandidateBuffer(peer);\n  current.attempt = { ...current.attempt, peer, channel, candidateBuffer };`,
-            'startSenderAttempt arbitration',
-          );
+          if (!main.includes('cleanupAttempt({ discardPartial = false, nextAttempt = null }')) {
+            main = replaceOnce(
+              main,
+              `async function cleanupAttempt({ discardPartial = false } = {}) {\n  const attempt = current.attempt;\n  current.attempt = freshAttempt();`,
+              `async function cleanupAttempt({ discardPartial = false, nextAttempt = null } = {}) {\n  const attempt = current.attempt;\n  current.attempt = nextAttempt || freshAttempt();`,
+              'cleanupAttempt reservation',
+            );
+          }
 
-          fs.writeFileSync(path, source);
+          if (!main.includes('if (current.attempt.id === attemptId) return;')) {
+            main = replaceOnce(
+              main,
+              `async function startSenderAttempt(attemptId) {\n  if (current.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;\n  await cleanupAttempt();\n\n  const socket = current.socket;\n  if (!socket) return;\n  const iceServers = await resolveIceServers();\n  if (current.role !== 'sender' || current.socket !== socket || !leaseOpen()) return;\n  const peer = createPeerConnection({ iceServers });\n  const channel = createTransferChannel(peer);\n  const candidateBuffer = createRemoteCandidateBuffer(peer);\n  current.attempt = { ...freshAttempt(), id: attemptId, peer, channel, candidateBuffer };`,
+              `async function startSenderAttempt(attemptId) {\n  if (current.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;\n  if (current.attempt.id === attemptId) return;\n  await cleanupAttempt({ nextAttempt: { ...freshAttempt(), id: attemptId } });\n  if (current.attempt.id !== attemptId) return;\n\n  const socket = current.socket;\n  if (!socket) {\n    if (current.attempt.id === attemptId) current.attempt = freshAttempt();\n    return;\n  }\n  const iceServers = await resolveIceServers();\n  if (current.attempt.id !== attemptId || current.socket !== socket || !leaseOpen()) return;\n  const peer = createPeerConnection({ iceServers });\n  const channel = createTransferChannel(peer);\n  const candidateBuffer = createRemoteCandidateBuffer(peer);\n  current.attempt = { ...current.attempt, peer, channel, candidateBuffer };`,
+              'startSenderAttempt arbitration',
+            );
+          }
+
+          if (!main.includes("function attachConnectionDiagnostics(peer, socket, attemptId, role)")) {
+            main = replaceOnce(
+              main,
+              'function attachConnectionDiagnostics(peer, socket, attemptId) {',
+              'function attachConnectionDiagnostics(peer, socket, attemptId, role) {',
+              'diagnostics role signature',
+            );
+          }
+
+          if (!main.includes("activeRestart: role === 'sender'")) {
+            main = replaceOnce(
+              main,
+              `  const iceRecovery = createIceRecoveryController(peer, renegotiate, {\n    onExhausted() {`,
+              `  const iceRecovery = createIceRecoveryController(peer, renegotiate, {\n    activeRestart: role === 'sender',\n    passiveFailureGraceMs: 10_000,\n    onExhausted() {`,
+              'ICE restart ownership options',
+            );
+          }
+
+          if (!main.includes("attachConnectionDiagnostics(peer, socket, attemptId, 'sender')")) {
+            const call = 'attachConnectionDiagnostics(peer, socket, attemptId);';
+            const first = main.indexOf(call);
+            const second = main.indexOf(call, first + call.length);
+            assert.notEqual(first, -1, 'sender diagnostics call not found');
+            assert.notEqual(second, -1, 'receiver diagnostics call not found');
+            assert.equal(main.indexOf(call, second + call.length), -1, 'unexpected extra diagnostics call');
+            main = main.slice(0, first)
+              + "attachConnectionDiagnostics(peer, socket, attemptId, 'sender');"
+              + main.slice(first + call.length);
+            const remaining = main.indexOf(call);
+            assert.notEqual(remaining, -1, 'receiver diagnostics call disappeared');
+            main = main.slice(0, remaining)
+              + "attachConnectionDiagnostics(peer, socket, attemptId, 'receiver');"
+              + main.slice(remaining + call.length);
+          }
+          fs.writeFileSync(mainPath, main);
+
+          const webrtcPath = 'apps/web/src/webrtc.js';
+          let webrtc = fs.readFileSync(webrtcPath, 'utf8');
+          if (!webrtc.includes('const activeRestart = options.activeRestart !== false;')) {
+            const startMarker = 'export function createIceRecoveryController(peer, renegotiate, options = {}) {';
+            const endMarker = '\nfunction statsValues(report) {';
+            const start = webrtc.indexOf(startMarker);
+            const end = webrtc.indexOf(endMarker, start);
+            assert.notEqual(start, -1, 'ICE controller start marker missing');
+            assert.notEqual(end, -1, 'ICE controller end marker missing');
+            const replacement = `export function createIceRecoveryController(peer, renegotiate, options = {}) {
+  if (!peer || typeof peer.restartIce !== 'function') throw new TypeError('peer.restartIce is required');
+  if (typeof renegotiate !== 'function') throw new TypeError('renegotiate must be a function');
+
+  const graceMs = Number.isFinite(options.graceMs) ? Math.max(0, options.graceMs) : 5_000;
+  const passiveFailureGraceMs = Number.isFinite(options.passiveFailureGraceMs)
+    ? Math.max(0, options.passiveFailureGraceMs)
+    : 10_000;
+  const activeRestart = options.activeRestart !== false;
+  const schedule = options.schedule || ((fn, ms) => setTimeout(fn, ms));
+  const cancel = options.cancel || ((id) => clearTimeout(id));
+  let graceTimer = null;
+  let restartUsed = false;
+  let restartPromise = null;
+  let exhausted = false;
+  let disposed = false;
+
+  function clearGraceTimer() {
+    if (graceTimer === null) return;
+    cancel(graceTimer);
+    graceTimer = null;
+  }
+
+  function schedulePassiveFailure() {
+    if (graceTimer !== null || exhausted || disposed) return;
+    graceTimer = schedule(() => {
+      graceTimer = null;
+      if (disposed || exhausted) return;
+      exhausted = true;
+      options.onExhausted?.();
+    }, passiveFailureGraceMs);
+  }
+
+  async function hardFailure() {
+    if (disposed) return 'disposed';
+    clearGraceTimer();
+    if (restartPromise) return restartPromise;
+    if (!activeRestart) {
+      schedulePassiveFailure();
+      return 'waiting';
+    }
+    if (restartUsed) {
+      if (!exhausted) {
+        exhausted = true;
+        options.onExhausted?.();
+      }
+      return 'exhausted';
+    }
+
+    restartUsed = true;
+    peer.restartIce();
+    restartPromise = Promise.resolve().then(renegotiate).then(() => 'restarted');
+    try {
+      return await restartPromise;
+    } finally {
+      restartPromise = null;
+    }
+  }
+
+  async function handleState(state) {
+    if (disposed) return 'disposed';
+    if (state === 'connected' || state === 'completed') {
+      clearGraceTimer();
+      return 'connected';
+    }
+    if (state === 'disconnected') {
+      if (graceTimer === null && !restartUsed) {
+        graceTimer = schedule(() => {
+          graceTimer = null;
+          Promise.resolve(hardFailure()).catch((error) => options.onError?.(error));
+        }, graceMs);
+      }
+      return 'waiting';
+    }
+    if (state === 'failed') {
+      if (!activeRestart) {
+        schedulePassiveFailure();
+        return 'waiting';
+      }
+      return hardFailure();
+    }
+    if (state === 'closed') {
+      clearGraceTimer();
+      return 'closed';
+    }
+    return 'ignored';
+  }
+
+  return {
+    handleState,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      clearGraceTimer();
+    },
+    get restartUsed() { return restartUsed; },
+  };
+}
+`;
+            webrtc = webrtc.slice(0, start) + replacement + webrtc.slice(end);
+          }
+          fs.writeFileSync(webrtcPath, webrtc);
           NODE
-          node --test tests/structure/web-lease-runtime.test.mjs
+          node --test tests/core/ice-recovery.test.mjs tests/structure/web-lease-runtime.test.mjs
       - name: Regenerate lockfile metadata only
         shell: bash
         run: |
@@ -73,16 +226,16 @@ jobs:
           NODE
       - name: Verify repaired branch before commit
         run: |
-          node --test tests/structure/web-lease-runtime.test.mjs tests/structure/version-alignment.test.mjs tests/structure/version.test.mjs
+          node --test tests/core/ice-recovery.test.mjs tests/structure/web-lease-runtime.test.mjs tests/structure/version-alignment.test.mjs tests/structure/version.test.mjs
       - name: Commit one-shot repairs if needed
         shell: bash
         run: |
-          if git diff --quiet -- apps/web/src/main.js package-lock.json; then
+          if git diff --quiet -- apps/web/src/main.js apps/web/src/webrtc.js package-lock.json; then
             echo 'Runtime and lockfile already aligned.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add apps/web/src/main.js package-lock.json
-          git commit -m 'fix: protect sender attempt replay and align v0.4 lockfile'
+          git add apps/web/src/main.js apps/web/src/webrtc.js package-lock.json
+          git commit -m 'fix: coordinate ICE recovery and sender attempt replay'
           git push origin HEAD:feat/v0.4-session-reliability
