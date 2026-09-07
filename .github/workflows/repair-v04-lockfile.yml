@@ -2,14 +2,14 @@ name: Repair v0.4 lockfile
 
 on:
   push:
-    branches: [feat/v0.4-session-reliability]
+    branches:
+      - feat/v0.4-session-reliability
 
 permissions:
   contents: write
 
 jobs:
   repair:
-    if: github.actor != 'github-actions[bot]' && github.event.head_commit.message != 'chore: remove temporary lockfile repair workflow'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,7 +36,7 @@ jobs:
           delete after.packages[''].version;
           assert.deepStrictEqual(after, before, 'npm changed dependency graph while repairing release metadata');
           NODE
-      - name: Commit repaired lockfile
+      - name: Commit repaired lockfile if needed
         shell: bash
         run: |
           if git diff --quiet -- package-lock.json; then
