@@ -2,7 +2,7 @@ import encodeQR from 'qr';
 import './style.css';
 import { isReceiveCode, normalizeReceiveCode, compactReceiveCode } from '../../../packages/core/session.js';
 import { DEFAULT_CHUNK_SIZE, encodeControlMessage, validateResumeOffset } from '../../../packages/core/transfer.js';
-import { createIceRecoveryController, createPeerConnection, createRemoteCandidateBuffer, createTransferChannel, detectSelectedCandidateType, parseDataChannelMessage, streamFileOverChannel, waitForBufferedAmountLow } from './webrtc.js';
+import { createIceRecoveryController, createPeerConnection, createRemoteCandidateBuffer, createTransferChannel, defaultIceServers, detectSelectedCandidateType, fetchOptionalIceServers, parseDataChannelMessage, streamFileOverChannel, waitForBufferedAmountLow } from './webrtc.js';
 import { connectSignal, sendSignal } from './signaling.js';
 import { createReceiveSink, downloadReceivedFile } from './storage.js';
 import { parseReceivePayload } from './receive-payload.js';
@@ -132,7 +132,7 @@ function formatRate(bytes, elapsedMs) {
 function transportLabel(type) {
   if (type === 'direct') return 'Direct';
   if (type === 'relay') return 'Relay';
-  return 'Secure P2P';
+  return 'Unknown';
 }
 
 function platformSupported() {
@@ -151,7 +151,7 @@ function resetProgress() {
   ui.progressValue.textContent = '0%';
   ui.progressLabel.textContent = 'Connecting';
   ui.rate.textContent = 'Secure P2P';
-  if (ui.eta) ui.eta.textContent = 'Direct P2P';
+  if (ui.eta) ui.eta.textContent = 'Unknown';
   ui.transferSize.textContent = '';
 }
 
@@ -373,6 +373,11 @@ function createFileId() {
   return crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+async function resolveIceServers() {
+  const optional = await fetchOptionalIceServers(SIGNALING_ORIGIN, { leaseCode: current.code });
+  return [...defaultIceServers(), ...optional];
+}
+
 async function handleSenderChannelMessage(event, attemptId) {
   if (current.role !== 'sender' || current.attempt.id !== attemptId) return;
   const parsed = parseDataChannelMessage(event.data);
@@ -432,7 +437,9 @@ async function startSenderAttempt(attemptId) {
 
   const socket = current.socket;
   if (!socket) return;
-  const peer = createPeerConnection();
+  const iceServers = await resolveIceServers();
+  if (current.role !== 'sender' || current.socket !== socket || !leaseOpen()) return;
+  const peer = createPeerConnection({ iceServers });
   const channel = createTransferChannel(peer);
   const candidateBuffer = createRemoteCandidateBuffer(peer);
   current.attempt = { ...freshAttempt(), id: attemptId, peer, channel, candidateBuffer };
@@ -669,14 +676,16 @@ async function receiveFile(rawCode) {
     if (!Number.isInteger(connected.attemptId)) throw new Error('Signaling did not provide a receiver attempt id.');
     const attemptId = connected.attemptId;
     current.expiresAt = connected.expiresAt;
+    startCountdown(current.expiresAt, () => { handleLeaseExpiry().catch(() => {}); });
 
-    const peer = createPeerConnection();
+    const iceServers = await resolveIceServers();
+    if (current.role !== 'receiver' || current.socket !== socket || !leaseOpen()) throw new Error('The receive lease expired before connection setup completed.');
+    const peer = createPeerConnection({ iceServers });
     const candidateBuffer = createRemoteCandidateBuffer(peer);
     current.attempt = { ...freshAttempt(), id: attemptId, peer, candidateBuffer };
     attachIce(peer, socket, attemptId);
     attachConnectionDiagnostics(peer, socket, attemptId);
     startConnectionTimer();
-    startCountdown(current.expiresAt, () => { handleLeaseExpiry().catch(() => {}); });
 
     peer.addEventListener('datachannel', ({ channel }) => bindReceiverChannel(channel, socket, attemptId));
     socket.addEventListener('message', (event) => {
