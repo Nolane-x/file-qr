@@ -28,6 +28,36 @@ function roomStub(env, code) {
   return env.SESSIONS.get(env.SESSIONS.idFromName(compactReceiveCode(code)));
 }
 
+function turnConfigured(env) {
+  return typeof env.TURN_KEY_ID === 'string' && env.TURN_KEY_ID.length > 0
+    && typeof env.TURN_KEY_API_TOKEN === 'string' && env.TURN_KEY_API_TOKEN.length > 0;
+}
+
+function turnCredentialTtlSeconds(env) {
+  const configured = Number(env.TURN_CREDENTIAL_TTL_SECONDS || 3600);
+  if (!Number.isFinite(configured)) return 3600;
+  return Math.min(172800, Math.max(300, Math.floor(configured)));
+}
+
+async function generateTurnCredentials(env) {
+  const ttl = turnCredentialTtlSeconds(env);
+  const response = await fetch(
+    `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ttl }),
+    },
+  );
+  if (!response.ok) return null;
+  const body = await response.json();
+  if (!Array.isArray(body?.iceServers) || body.iceServers.length === 0) return null;
+  return { iceServers: body.iceServers, expiresAt: Date.now() + ttl * 1000 };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -35,6 +65,27 @@ export default {
 
     if (url.pathname === '/health') {
       return json({ ok: true, service: 'file-qr-signaling', ttlMs: Number(env.SESSION_TTL_MS || SESSION_TTL_MS) });
+    }
+
+    if (url.pathname === '/v1/turn-credentials' && request.method === 'POST') {
+      if (!turnConfigured(env)) return json({ error: 'turn-not-configured' }, { status: 404 });
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'invalid-request' }, { status: 400 });
+      }
+      const code = body?.code;
+      if (!isReceiveCode(code)) return json({ error: 'session-not-found' }, { status: 404 });
+
+      const authorization = await roomStub(env, code).fetch('https://room.internal/turn-authorize', { method: 'POST' });
+      if (!authorization.ok) {
+        return json({ error: 'session-expired' }, { status: authorization.status === 410 ? 410 : 404 });
+      }
+
+      const credentials = await generateTurnCredentials(env);
+      if (!credentials) return json({ error: 'turn-provider-unavailable' }, { status: 502 });
+      return json(credentials);
     }
 
     if (url.pathname === '/v1/sessions' && request.method === 'POST') {
@@ -75,6 +126,7 @@ export class SessionRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === '/init' && request.method === 'POST') return this.#init(request);
+    if (url.pathname === '/turn-authorize' && request.method === 'POST') return this.#authorizeTurn();
     if (url.pathname.endsWith('/connect') && request.method === 'GET') return this.#connect(request);
     return json({ error: 'not-found' }, { status: 404 });
   }
@@ -86,9 +138,20 @@ export class SessionRoom extends DurableObject {
     if (!session?.senderToken || !Number.isFinite(session?.expiresAt)) {
       return json({ error: 'invalid-session' }, { status: 400 });
     }
-    await this.ctx.storage.put('session', { ...session, consumed: false });
+    await this.ctx.storage.put('session', {
+      ...session,
+      attemptCounter: 0,
+      activeAttemptId: null,
+      readyAttemptId: null,
+    });
     await this.ctx.storage.setAlarm(session.expiresAt);
     return json({ ok: true }, { status: 201 });
+  }
+
+  async #authorizeTurn() {
+    const session = await this.ctx.storage.get('session');
+    if (!session || Date.now() >= session.expiresAt) return json({ error: 'session-expired' }, { status: 410 });
+    return json({ ok: true, expiresAt: session.expiresAt });
   }
 
   async #connect(request) {
@@ -96,15 +159,12 @@ export class SessionRoom extends DurableObject {
       return json({ error: 'websocket-required' }, { status: 426 });
     }
 
-    const session = await this.ctx.storage.get('session');
+    let session = await this.ctx.storage.get('session');
     if (!session || Date.now() >= session.expiresAt) return json({ error: 'session-expired' }, { status: 410 });
 
     const url = new URL(request.url);
     const role = url.searchParams.get('role');
     if (role !== 'sender' && role !== 'receiver') return json({ error: 'invalid-role' }, { status: 400 });
-    if (session.consumed && this.ctx.getWebSockets(role).length === 0) {
-      return json({ error: 'session-consumed' }, { status: 410 });
-    }
     if (role === 'sender' && url.searchParams.get('token') !== session.senderToken) {
       return json({ error: 'forbidden' }, { status: 403 });
     }
@@ -112,14 +172,36 @@ export class SessionRoom extends DurableObject {
       return json({ error: `${role}-already-connected` }, { status: 409 });
     }
 
+    let attemptId = null;
+    if (role === 'receiver') {
+      attemptId = Number(session.attemptCounter || 0) + 1;
+      session = {
+        ...session,
+        attemptCounter: attemptId,
+        activeAttemptId: attemptId,
+        readyAttemptId: null,
+      };
+      await this.ctx.storage.put('session', session);
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server, [role]);
-    server.serializeAttachment({ role });
-    server.send(JSON.stringify({ type: 'connected', role, expiresAt: session.expiresAt }));
+    if (role === 'receiver') server.serializeAttachment({ role, attemptId });
+    else server.serializeAttachment({ role });
+    server.send(JSON.stringify({
+      type: 'connected',
+      role,
+      expiresAt: session.expiresAt,
+      ...(attemptId ? { attemptId } : {}),
+    }));
 
-    if (this.ctx.getWebSockets('sender').length && this.ctx.getWebSockets('receiver').length) {
-      this.#broadcast({ type: 'peer-ready' });
+    if (
+      role === 'sender'
+      && Number.isInteger(session.readyAttemptId)
+      && session.readyAttemptId === session.activeAttemptId
+    ) {
+      server.send(JSON.stringify({ type: 'peer-ready', attemptId: session.activeAttemptId }));
     }
 
     return new Response(null, { status: 101, webSocket: client });
@@ -136,20 +218,44 @@ export class SessionRoom extends DurableObject {
 
     const attachment = ws.deserializeAttachment?.() || {};
     const role = attachment.role;
-    if (payload?.type === 'session-consumed' && role === 'sender') {
-      const session = await this.ctx.storage.get('session');
-      if (session && !session.consumed) await this.ctx.storage.put('session', { ...session, consumed: true });
+    if (role !== 'sender' && role !== 'receiver') return;
+
+    let session = await this.ctx.storage.get('session');
+    if (!session) return;
+
+    if (payload?.type === 'attempt-ready' && role === 'receiver') {
+      if (!Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId || attachment.attemptId !== session.activeAttemptId) return;
+      session = { ...session, readyAttemptId: session.activeAttemptId };
+      await this.ctx.storage.put('session', session);
+      if (this.ctx.getWebSockets('sender').length) {
+        this.#broadcast({ type: 'peer-ready', attemptId: session.activeAttemptId });
+      }
       return;
     }
 
     if (!['description', 'candidate'].includes(payload?.type)) return;
+    if (!Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId) return;
+    if (role === 'receiver' && attachment.attemptId !== session.activeAttemptId) return;
+
     const target = role === 'sender' ? 'receiver' : 'sender';
     for (const peer of this.ctx.getWebSockets(target)) {
       try { peer.send(message); } catch { /* peer may have just closed */ }
     }
   }
 
-  webSocketClose(ws, code, reason) {
+  async webSocketClose(ws, code, reason) {
+    const attachment = ws.deserializeAttachment?.() || {};
+    const { role, attemptId } = attachment;
+    if (role === 'receiver' && Number.isInteger(attemptId)) {
+      const session = await this.ctx.storage.get('session');
+      if (session?.activeAttemptId === attemptId) {
+        await this.ctx.storage.put('session', {
+          ...session,
+          activeAttemptId: null,
+          readyAttemptId: null,
+        });
+      }
+    }
     try { ws.close(code, reason); } catch { /* already closed */ }
   }
 
