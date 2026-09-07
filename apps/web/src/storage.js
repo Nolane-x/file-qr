@@ -1,54 +1,191 @@
 const DEFAULT_MEMORY_LIMIT = 512 * 1024 * 1024;
+const memoryPartials = new Map();
 
-export function createMemorySink(meta, limit = DEFAULT_MEMORY_LIMIT) {
-  const chunks = [];
-  let received = 0;
+function safePart(value) {
+  return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 72);
+}
+
+export function partialStorageKey(leaseCode, fileId) {
+  const lease = safePart(leaseCode);
+  const file = safePart(fileId);
+  if (!lease || !file) throw new Error('Lease code and fileId are required for resumable storage');
+  return `fqr_${lease}_${file}`;
+}
+
+export function partialMetaCompatible(left, right) {
+  if (!left || !right) return false;
+  return left.fileId === right.fileId
+    && left.name === right.name
+    && left.size === right.size
+    && (left.type || 'application/octet-stream') === (right.type || 'application/octet-stream');
+}
+
+function normalizeMemoryOptions(limitOrOptions) {
+  if (typeof limitOrOptions === 'number') return { limit: limitOrOptions, key: null };
+  return {
+    limit: limitOrOptions?.limit ?? DEFAULT_MEMORY_LIMIT,
+    key: limitOrOptions?.key ?? null,
+  };
+}
+
+export function createMemorySink(meta, limitOrOptions = DEFAULT_MEMORY_LIMIT) {
+  const { limit, key } = normalizeMemoryOptions(limitOrOptions);
+  let state = key ? memoryPartials.get(key) : null;
+  if (state && !partialMetaCompatible(state.meta, meta)) {
+    memoryPartials.delete(key);
+    state = null;
+  }
+  if (!state) {
+    state = { meta: { ...meta }, chunks: [], received: 0 };
+    if (key) memoryPartials.set(key, state);
+  }
+
+  const chunks = state.chunks;
+  let received = state.received;
+  const sync = () => { state.received = received; };
+
   return {
     kind: 'memory',
+    get offset() { return received; },
     async write(bytes) {
       if (meta.size > limit || received + bytes.byteLength > limit) {
         throw new Error('Browser memory storage is not suitable for this file. Use the native app for large files.');
       }
+      if (received + bytes.byteLength > meta.size) throw new Error('Received bytes exceed advertised file size');
       chunks.push(bytes.slice());
+      received += bytes.byteLength;
+      sync();
+    },
+    async close() {
+      if (received !== meta.size) throw new Error('Received file is incomplete');
+      sync();
+      return new File(chunks, meta.name, { type: meta.type || 'application/octet-stream', lastModified: Date.now() });
+    },
+    async abort({ discard = false } = {}) {
+      if (key && !discard) {
+        sync();
+        return;
+      }
+      chunks.length = 0;
+      received = 0;
+      sync();
+      if (key) memoryPartials.delete(key);
+    },
+    async cleanup() {
+      chunks.length = 0;
+      received = 0;
+      sync();
+      if (key) memoryPartials.delete(key);
+    },
+  };
+}
+
+async function removeEntry(root, name) {
+  try { await root.removeEntry(name); } catch { /* already gone */ }
+}
+
+async function readPartialMeta(root, name) {
+  try {
+    const handle = await root.getFileHandle(name);
+    const file = await handle.getFile();
+    return JSON.parse(await file.text());
+  } catch {
+    return null;
+  }
+}
+
+async function writePartialMeta(root, name, meta) {
+  const handle = await root.getFileHandle(name, { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(JSON.stringify(meta));
+  await writable.close();
+}
+
+async function createOpfsSink(meta, options = {}) {
+  const root = await navigator.storage.getDirectory();
+  const key = options.key || partialStorageKey(options.leaseCode, meta.fileId || options.fileId);
+  const partName = `${key}.part`;
+  const metaName = `${key}.json`;
+  let savedMeta = await readPartialMeta(root, metaName);
+  let existingSize = 0;
+
+  if (savedMeta && !partialMetaCompatible(savedMeta, meta)) {
+    await removeEntry(root, partName);
+    await removeEntry(root, metaName);
+    savedMeta = null;
+  }
+
+  let handle;
+  if (savedMeta) {
+    try {
+      handle = await root.getFileHandle(partName);
+      const partial = await handle.getFile();
+      if (partial.size <= meta.size) existingSize = partial.size;
+      else {
+        await removeEntry(root, partName);
+        await removeEntry(root, metaName);
+        handle = null;
+        savedMeta = null;
+      }
+    } catch {
+      handle = null;
+      savedMeta = null;
+    }
+  }
+
+  if (!handle) handle = await root.getFileHandle(partName, { create: true });
+  if (!savedMeta) await writePartialMeta(root, metaName, { ...meta });
+
+  const writable = await handle.createWritable({ keepExistingData: true });
+  if (existingSize > 0) await writable.seek(existingSize);
+  let received = existingSize;
+  let closed = false;
+
+  async function closeWritable() {
+    if (closed) return;
+    await writable.close();
+    closed = true;
+  }
+
+  return {
+    kind: 'opfs',
+    get offset() { return received; },
+    async write(bytes) {
+      if (received + bytes.byteLength > meta.size) throw new Error('Received bytes exceed advertised file size');
+      await writable.write(bytes);
       received += bytes.byteLength;
     },
     async close() {
-      return new File(chunks, meta.name, { type: meta.type || 'application/octet-stream', lastModified: Date.now() });
-    },
-    async abort() { chunks.length = 0; received = 0; },
-  };
-}
-
-async function createOpfsSink(meta) {
-  const root = await navigator.storage.getDirectory();
-  const entryName = `file-qr-${crypto.randomUUID()}.part`;
-  const handle = await root.getFileHandle(entryName, { create: true });
-  const writable = await handle.createWritable();
-  let closed = false;
-  return {
-    kind: 'opfs',
-    async write(bytes) { await writable.write(bytes); },
-    async close() {
-      if (!closed) { await writable.close(); closed = true; }
+      if (received !== meta.size) throw new Error('Received file is incomplete');
+      await closeWritable();
       const file = await handle.getFile();
       return new File([file], meta.name, { type: meta.type || file.type || 'application/octet-stream', lastModified: Date.now() });
     },
-    async abort() {
-      if (!closed) {
-        try { await writable.abort(); } catch { /* no-op */ }
-        closed = true;
+    async abort({ discard = false } = {}) {
+      try { await closeWritable(); } catch { /* preserve whatever was committed */ }
+      if (discard) {
+        await removeEntry(root, partName);
+        await removeEntry(root, metaName);
       }
-      try { await root.removeEntry(entryName); } catch { /* already gone */ }
     },
-    async cleanup() { try { await root.removeEntry(entryName); } catch { /* already gone */ } },
+    async cleanup() {
+      try { await closeWritable(); } catch { /* continue cleanup */ }
+      await removeEntry(root, partName);
+      await removeEntry(root, metaName);
+    },
   };
 }
 
-export async function createReceiveSink(meta) {
-  if (typeof navigator !== 'undefined' && navigator.storage?.getDirectory) {
-    try { return await createOpfsSink(meta); } catch { /* fall back to memory */ }
+export async function createReceiveSink(meta, options = {}) {
+  const key = options.key || (
+    options.leaseCode && (meta.fileId || options.fileId)
+      ? partialStorageKey(options.leaseCode, meta.fileId || options.fileId)
+      : null
+  );
+  if (typeof navigator !== 'undefined' && navigator.storage?.getDirectory && key) {
+    try { return await createOpfsSink(meta, { ...options, key }); } catch { /* fall back to memory */ }
   }
-  return createMemorySink(meta);
+  return createMemorySink(meta, { limit: options.limit ?? DEFAULT_MEMORY_LIMIT, key });
 }
 
 export function downloadReceivedFile(file, name = file.name) {
