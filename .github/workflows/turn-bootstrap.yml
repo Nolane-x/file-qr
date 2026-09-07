@@ -2,6 +2,11 @@ name: Bootstrap Production TURN
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/turn-bootstrap.yml'
+      - 'scripts/bootstrap-production-turn.mjs'
 
 concurrency:
   group: turn-bootstrap-production-main
