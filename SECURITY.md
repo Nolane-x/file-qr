@@ -9,7 +9,7 @@ File QR is designed to avoid server-side file custody. The signaling service han
 - Receive codes contain 50 bits of random Crockford Base32 entropy and expire exactly 600 seconds after session creation. The receive code is a bearer capability, not an authenticated user identity.
 - A separate random sender token is required to occupy the sender role. The receive code alone is not sufficient to become the sender.
 - The 10-minute lease is reusable while `Date.now() < expiresAt`. A completed or failed receiver attempt does not consume the remaining lease.
-- A room admits one sender and at most one receiver attempt is active at a time. Multiple receivers may download sequentially during the same live lease.
+- A room admits one sender; at most one receiver attempt is active at a time. Multiple receivers may download sequentially during the same live lease.
 - Every receiver admission receives a monotonic `attemptId`. SDP, ICE candidates, receiver readiness, and transfer-attempt state are isolated by that identity so stale signaling from an older attempt is ignored rather than applied to a newer peer.
 - A receiver admitted before lease expiry may finish an already-open WebRTC transfer after signaling expires. No new receiver is admitted at or after the expiry instant.
 - Sender signaling may reconnect while the lease is open. Receiver readiness is persisted so a reconnect cannot silently lose an already-admitted receiver.
