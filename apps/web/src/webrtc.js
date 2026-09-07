@@ -9,6 +9,41 @@ export function defaultIceServers() {
 
 export const DEFAULT_ICE_SERVERS = defaultIceServers();
 
+function normalizeTurnIceServer(server) {
+  if (!server || typeof server !== 'object') return null;
+  const rawUrls = Array.isArray(server.urls) ? server.urls : [server.urls];
+  const urls = rawUrls.filter((url) => typeof url === 'string' && /^(?:turn|turns):/i.test(url));
+  if (!urls.length || typeof server.username !== 'string' || typeof server.credential !== 'string') return null;
+  return { urls, username: server.username, credential: server.credential };
+}
+
+export async function fetchOptionalIceServers(signalingOrigin, options = {}) {
+  const origin = String(signalingOrigin || '').replace(/\/$/, '');
+  const leaseCode = String(options.leaseCode || '').trim();
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (!origin || !leaseCode || typeof fetchImpl !== 'function') return [];
+
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1, options.timeoutMs) : 2_500;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetchImpl(`${origin}/v1/turn-credentials`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: leaseCode }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    if (!response.ok) return [];
+    const body = await response.json();
+    if (!Array.isArray(body?.iceServers) || !Number.isFinite(body?.expiresAt) || body.expiresAt <= Date.now()) return [];
+    return body.iceServers.map(normalizeTurnIceServer).filter(Boolean);
+  } catch {
+    return [];
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export function createIceRecoveryController(peer, renegotiate, options = {}) {
   if (!peer || typeof peer.restartIce !== 'function') throw new TypeError('peer.restartIce is required');
   if (typeof renegotiate !== 'function') throw new TypeError('renegotiate must be a function');
