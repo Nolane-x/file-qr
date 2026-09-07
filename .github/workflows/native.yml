@@ -20,16 +20,102 @@ jobs:
           node-version: 24
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install
-      - run: npx tauri build --bundles nsis
+
+      - name: Assert production Windows signing secrets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE)) {
+            throw 'WINDOWS_CERTIFICATE is required for production native releases.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            throw 'WINDOWS_CERTIFICATE_PASSWORD is required for production native releases.'
+          }
+
+      - name: Import production Windows signing certificate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'file-qr-code-signing.pfx'
+          try {
+            $base64 = ($env:WINDOWS_CERTIFICATE -replace '\s', '')
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($base64))
+            $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+            $imported = @(Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $password)
+            if ($imported.Count -eq 0) {
+              throw 'Windows signing certificate import returned no certificates.'
+            }
+            $importedThumbprints = @($imported | ForEach-Object { $_.Thumbprint } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            "FILE_QR_WINDOWS_IMPORTED_THUMBPRINTS=$($importedThumbprints -join ',')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $cert = $imported | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+            if ($null -eq $cert) {
+              throw 'Imported Windows signing certificate has no private key.'
+            }
+            "FILE_QR_WINDOWS_CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            if ($cert.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow) {
+              throw 'Windows signing certificate is expired.'
+            }
+            $eku = @($cert.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId.Value })
+            if ($eku -notcontains '1.3.6.1.5.5.7.3.3') {
+              throw 'Windows certificate is not valid for Code Signing EKU.'
+            }
+          } finally {
+            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Configure Tauri Windows signing
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          FILE_QR_WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.comodoca.com' }}
+        run: node scripts/configure-windows-signing.mjs
+
+      - name: Build Windows NSIS package
+        run: npx tauri build --bundles nsis
         working-directory: apps/native
         env:
           VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
+
       - name: Normalize Windows artifact name
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
           $installer = Get-ChildItem apps/native/src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          if ($null -eq $installer) { throw 'Windows NSIS installer was not produced.' }
           Copy-Item $installer.FullName release/FileQR-Windows-x64-setup.exe
+
+      - name: Verify Windows Authenticode signature
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature 'release/FileQR-Windows-x64-setup.exe'
+          if ($signature.Status -ne 'Valid') {
+            throw "Windows Authenticode verification failed: $($signature.Status)"
+          }
+          if ($null -eq $signature.SignerCertificate) {
+            throw 'Windows installer has no signer certificate.'
+          }
+          if ($signature.SignerCertificate.Thumbprint -ne $env:FILE_QR_WINDOWS_CERT_THUMBPRINT) {
+            throw 'Windows installer was signed by an unexpected certificate.'
+          }
+
+      - name: Cleanup Windows signing material
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item (Join-Path $env:RUNNER_TEMP 'file-qr-code-signing.pfx') -Force -ErrorAction SilentlyContinue
+          foreach ($thumbprint in @($env:FILE_QR_WINDOWS_IMPORTED_THUMBPRINTS -split ',')) {
+            $thumbprint = $thumbprint.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($thumbprint)) {
+              Remove-Item "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue
+            }
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: file-qr-windows
@@ -49,25 +135,144 @@ jobs:
       - name: Install Android NDK
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
       - run: npm install
+
+      - name: Assert production Android signing secrets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          test -n "$ANDROID_KEY_BASE64" || { echo 'ANDROID_KEY_BASE64 is required for production native releases.' >&2; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo 'ANDROID_KEY_PASSWORD is required for production native releases.' >&2; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo 'ANDROID_KEY_ALIAS is required for production native releases.' >&2; exit 1; }
+
       - name: Initialize Android project with camera permission
         run: npm run android:init
         working-directory: apps/native
+
       - name: Verify Android camera manifest
         run: |
           grep -R -q 'android.permission.CAMERA' apps/native/src-tauri/gen/android
           grep -R -q 'android.hardware.camera.any' apps/native/src-tauri/gen/android
+
+      - name: Exercise Android release signing patch with ephemeral CI key
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_KEYSTORE="$RUNNER_TEMP/file-qr-ci-source.jks"
+          PATCHED_KEYSTORE="$RUNNER_TEMP/file-qr-ci-patched.jks"
+          CI_PASSWORD='file-qr-ci-signing'
+          CI_ALIAS='file-qr-ci'
+          keytool -genkeypair \
+            -keystore "$SOURCE_KEYSTORE" \
+            -storepass "$CI_PASSWORD" \
+            -keypass "$CI_PASSWORD" \
+            -alias "$CI_ALIAS" \
+            -dname "CN=File QR CI Preview, O=File QR, C=US" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -storetype JKS \
+            -noprompt >/dev/null 2>&1
+          export ANDROID_KEY_BASE64="$(base64 -w0 "$SOURCE_KEYSTORE")"
+          export ANDROID_KEY_PASSWORD="$CI_PASSWORD"
+          export ANDROID_KEY_ALIAS="$CI_ALIAS"
+          export FILE_QR_ANDROID_KEYSTORE_PATH="$PATCHED_KEYSTORE"
+          node scripts/configure-android-signing.mjs
+          keytool -list \
+            -keystore "$PATCHED_KEYSTORE" \
+            -storepass "$CI_PASSWORD" \
+            -alias "$CI_ALIAS" >/dev/null
+          rm -f "$SOURCE_KEYSTORE"
+
+      - name: Configure Android release signing
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          FILE_QR_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/file-qr-release.jks
+        run: node scripts/configure-android-signing.mjs
+
+      - name: Validate Android release keystore and certificate identity
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          keytool -list \
+            -keystore "$RUNNER_TEMP/file-qr-release.jks" \
+            -storepass "$ANDROID_KEY_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          cert_sha256="$(
+            keytool -exportcert \
+              -keystore "$RUNNER_TEMP/file-qr-release.jks" \
+              -storepass "$ANDROID_KEY_PASSWORD" \
+              -alias "$ANDROID_KEY_ALIAS" \
+              | sha256sum \
+              | cut -d' ' -f1
+          )"
+          if ! [[ "$cert_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo 'Unable to derive Android release certificate SHA-256 digest.' >&2
+            exit 1
+          fi
+          echo "FILE_QR_ANDROID_CERT_SHA256=$cert_sha256" >> "$GITHUB_ENV"
+
+      - name: Build signed production APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npx tauri android build --apk --target aarch64
+        working-directory: apps/native
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
+
       - name: Build installable preview APK
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: npx tauri android build --apk --debug --target aarch64
         working-directory: apps/native
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
           VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
+
       - name: Normalize Android artifact name
         run: |
           mkdir -p release
-          apk=$(find apps/native/src-tauri/gen/android -type f -name '*.apk' | head -n 1)
+          apk=$(find apps/native/src-tauri/gen/android -type f -name '*.apk' ! -name '*unsigned*' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)
           test -n "$apk"
           cp "$apk" release/FileQR-Android-arm64.apk
+
+      - name: Verify Android APK signature
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_HOME/build-tools/36.0.0:$PATH"
+          signer_output="$(apksigner verify --verbose --print-certs release/FileQR-Android-arm64.apk)"
+          printf '%s\n' "$signer_output"
+          signer_sha256="$(
+            printf '%s\n' "$signer_output" \
+              | awk -F': ' '/^Signer #1 certificate SHA-256 digest:/ { value=$2; gsub(/:/, "", value); print tolower(value); exit }'
+          )"
+          expected_sha256="$(printf '%s' "$FILE_QR_ANDROID_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
+          if [ -z "$signer_sha256" ] || [ "$signer_sha256" != "$expected_sha256" ]; then
+            echo 'Android APK signer certificate does not match the configured release keystore.' >&2
+            exit 1
+          fi
+
+      - name: Cleanup ephemeral Android signing material
+        if: always()
+        shell: bash
+        run: |
+          rm -f \
+            "$RUNNER_TEMP/file-qr-ci-source.jks" \
+            "$RUNNER_TEMP/file-qr-ci-patched.jks" \
+            "$RUNNER_TEMP/file-qr-release.jks" \
+            apps/native/src-tauri/gen/android/keystore.properties
+
       - uses: actions/upload-artifact@v4
         with:
           name: file-qr-android
