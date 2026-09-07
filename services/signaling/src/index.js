@@ -86,7 +86,11 @@ export class SessionRoom extends DurableObject {
     if (!session?.senderToken || !Number.isFinite(session?.expiresAt)) {
       return json({ error: 'invalid-session' }, { status: 400 });
     }
-    await this.ctx.storage.put('session', { ...session, consumed: false });
+    await this.ctx.storage.put('session', {
+      ...session,
+      attemptCounter: 0,
+      activeAttemptId: null,
+    });
     await this.ctx.storage.setAlarm(session.expiresAt);
     return json({ ok: true }, { status: 201 });
   }
@@ -96,15 +100,12 @@ export class SessionRoom extends DurableObject {
       return json({ error: 'websocket-required' }, { status: 426 });
     }
 
-    const session = await this.ctx.storage.get('session');
+    let session = await this.ctx.storage.get('session');
     if (!session || Date.now() >= session.expiresAt) return json({ error: 'session-expired' }, { status: 410 });
 
     const url = new URL(request.url);
     const role = url.searchParams.get('role');
     if (role !== 'sender' && role !== 'receiver') return json({ error: 'invalid-role' }, { status: 400 });
-    if (session.consumed && this.ctx.getWebSockets(role).length === 0) {
-      return json({ error: 'session-consumed' }, { status: 410 });
-    }
     if (role === 'sender' && url.searchParams.get('token') !== session.senderToken) {
       return json({ error: 'forbidden' }, { status: 403 });
     }
@@ -112,14 +113,27 @@ export class SessionRoom extends DurableObject {
       return json({ error: `${role}-already-connected` }, { status: 409 });
     }
 
+    let attemptId = null;
+    if (role === 'receiver') {
+      attemptId = Number(session.attemptCounter || 0) + 1;
+      session = { ...session, attemptCounter: attemptId, activeAttemptId: attemptId };
+      await this.ctx.storage.put('session', session);
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server, [role]);
-    server.serializeAttachment({ role });
-    server.send(JSON.stringify({ type: 'connected', role, expiresAt: session.expiresAt }));
+    if (role === 'receiver') server.serializeAttachment({ role, attemptId });
+    else server.serializeAttachment({ role });
+    server.send(JSON.stringify({
+      type: 'connected',
+      role,
+      expiresAt: session.expiresAt,
+      ...(attemptId ? { attemptId } : {}),
+    }));
 
     if (this.ctx.getWebSockets('sender').length && this.ctx.getWebSockets('receiver').length) {
-      this.#broadcast({ type: 'peer-ready' });
+      this.#broadcast({ type: 'peer-ready', attemptId: session.activeAttemptId });
     }
 
     return new Response(null, { status: 101, webSocket: client });
@@ -134,22 +148,31 @@ export class SessionRoom extends DurableObject {
       return;
     }
 
+    if (!['description', 'candidate'].includes(payload?.type)) return;
+
     const attachment = ws.deserializeAttachment?.() || {};
     const role = attachment.role;
-    if (payload?.type === 'session-consumed' && role === 'sender') {
-      const session = await this.ctx.storage.get('session');
-      if (session && !session.consumed) await this.ctx.storage.put('session', { ...session, consumed: true });
-      return;
-    }
+    if (role !== 'sender' && role !== 'receiver') return;
 
-    if (!['description', 'candidate'].includes(payload?.type)) return;
+    const session = await this.ctx.storage.get('session');
+    if (!session || !Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId) return;
+    if (role === 'receiver' && attachment.attemptId !== session.activeAttemptId) return;
+
     const target = role === 'sender' ? 'receiver' : 'sender';
     for (const peer of this.ctx.getWebSockets(target)) {
       try { peer.send(message); } catch { /* peer may have just closed */ }
     }
   }
 
-  webSocketClose(ws, code, reason) {
+  async webSocketClose(ws, code, reason) {
+    const attachment = ws.deserializeAttachment?.() || {};
+    const { role, attemptId } = attachment;
+    if (role === 'receiver' && Number.isInteger(attemptId)) {
+      const session = await this.ctx.storage.get('session');
+      if (session?.activeAttemptId === attemptId) {
+        await this.ctx.storage.put('session', { ...session, activeAttemptId: null });
+      }
+    }
     try { ws.close(code, reason); } catch { /* already closed */ }
   }
 
