@@ -10,8 +10,30 @@ test('web deployment uses Cloudflare Workers static assets with production smoke
   assert.ok(yml.includes('CLOUDFLARE_API_TOKEN'));
   assert.ok(yml.includes('CLOUDFLARE_ACCOUNT_ID'));
   assert.ok(yml.includes('https://fileqr.nolane-file.workers.dev'));
-  assert.ok(!yml.includes('actions/configure-pages@v5'));
-  assert.ok(!yml.includes('actions/deploy-pages@v4'));
+  assert.ok(!yml.includes('actions/configure-pages@v6'));
+  assert.ok(!yml.includes('actions/deploy-pages@v5'));
+});
+
+test('GitHub Pages mirror keeps repo base isolated from Cloudflare root build', () => {
+  const workflowUrl = new URL('../../.github/workflows/github-pages.yml', import.meta.url);
+  assert.ok(fs.existsSync(workflowUrl), 'GitHub Pages mirror workflow should exist');
+  const yml = fs.readFileSync(workflowUrl, 'utf8');
+  const vite = read('../../apps/web/vite.config.js');
+  const cloudflare = read('../../.github/workflows/pages.yml');
+  assert.ok(yml.includes('pull_request:'));
+  assert.ok(yml.includes('actions/configure-pages@v6'));
+  assert.ok(yml.includes('actions/upload-pages-artifact@v5'));
+  assert.ok(yml.includes('actions/deploy-pages@v5'));
+  assert.ok(yml.includes('pages: write'));
+  assert.ok(yml.includes('id-token: write'));
+  assert.ok(yml.includes('VITE_BASE: /file-qr/'));
+  assert.ok(yml.includes('VITE_SIGNALING_ORIGIN:'));
+  assert.ok(yml.includes('https://file-qr-signaling.nolane-file.workers.dev'));
+  assert.ok(yml.includes("github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"));
+  assert.ok(yml.includes("grep -q '/file-qr/assets/' apps/web/dist/index.html"));
+  assert.ok(vite.includes("base: process.env.VITE_BASE || '/'"));
+  assert.ok(!vite.includes('GITHUB_ACTIONS'));
+  assert.ok(!cloudflare.includes('VITE_BASE: /file-qr/'));
 });
 
 test('web worker configuration publishes the Vite dist directory as static assets', () => {
@@ -23,10 +45,10 @@ test('web worker configuration publishes the Vite dist directory as static asset
   assert.ok(config.includes('"not_found_handling": "single-page-application"'));
 });
 
-test('web build targets the root path used by the Cloudflare deployment', () => {
+test('web build defaults to the Cloudflare root path without action-global coupling', () => {
   const vite = read('../../apps/web/vite.config.js');
-  assert.ok(vite.includes("base: '/'"));
-  assert.ok(!vite.includes("'/file-qr/'"));
+  assert.ok(vite.includes("base: process.env.VITE_BASE || '/'"));
+  assert.ok(!vite.includes('GITHUB_ACTIONS'));
 });
 
 test('native workflow contains Windows and permission-aware Android build jobs', () => {
