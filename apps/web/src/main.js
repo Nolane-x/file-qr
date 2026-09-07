@@ -181,9 +181,9 @@ function stopConnectionTimer() {
   current.attempt.connectionTimer = null;
 }
 
-async function cleanupAttempt({ discardPartial = false } = {}) {
+async function cleanupAttempt({ discardPartial = false, nextAttempt = null } = {}) {
   const attempt = current.attempt;
-  current.attempt = freshAttempt();
+  current.attempt = nextAttempt || freshAttempt();
   if (attempt.connectionTimer) clearTimeout(attempt.connectionTimer);
   attempt.iceRecovery?.dispose?.();
   try { attempt.channel?.close(); } catch { /* no-op */ }
@@ -291,7 +291,7 @@ function attachIce(peer, socket, attemptId) {
   });
 }
 
-function attachConnectionDiagnostics(peer, socket, attemptId) {
+function attachConnectionDiagnostics(peer, socket, attemptId, role) {
   const renegotiate = async () => {
     if (current.attempt.peer !== peer || current.attempt.id !== attemptId) return;
     const offer = await peer.createOffer({ iceRestart: true });
@@ -300,6 +300,8 @@ function attachConnectionDiagnostics(peer, socket, attemptId) {
   };
 
   const iceRecovery = createIceRecoveryController(peer, renegotiate, {
+    activeRestart: role === 'sender',
+    passiveFailureGraceMs: 10_000,
     onExhausted() {
       if (current.attempt.peer === peer && current.attempt.id === attemptId) {
         failTransfer('The WebRTC path failed after one ICE recovery attempt.').catch(() => {});
@@ -433,18 +435,23 @@ async function handleSenderChannelMessage(event, attemptId) {
 
 async function startSenderAttempt(attemptId) {
   if (current.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;
-  await cleanupAttempt();
+  if (current.attempt.id === attemptId) return;
+  await cleanupAttempt({ nextAttempt: { ...freshAttempt(), id: attemptId } });
+  if (current.attempt.id !== attemptId) return;
 
   const socket = current.socket;
-  if (!socket) return;
+  if (!socket) {
+    if (current.attempt.id === attemptId) current.attempt = freshAttempt();
+    return;
+  }
   const iceServers = await resolveIceServers();
-  if (current.role !== 'sender' || current.socket !== socket || !leaseOpen()) return;
+  if (current.attempt.id !== attemptId || current.socket !== socket || !leaseOpen()) return;
   const peer = createPeerConnection({ iceServers });
   const channel = createTransferChannel(peer);
   const candidateBuffer = createRemoteCandidateBuffer(peer);
-  current.attempt = { ...freshAttempt(), id: attemptId, peer, channel, candidateBuffer };
+  current.attempt = { ...current.attempt, peer, channel, candidateBuffer };
   attachIce(peer, socket, attemptId);
-  attachConnectionDiagnostics(peer, socket, attemptId);
+  attachConnectionDiagnostics(peer, socket, attemptId, 'sender');
 
   channel.addEventListener('open', () => {
     if (current.attempt.id !== attemptId) return;
@@ -684,7 +691,7 @@ async function receiveFile(rawCode) {
     const candidateBuffer = createRemoteCandidateBuffer(peer);
     current.attempt = { ...freshAttempt(), id: attemptId, peer, candidateBuffer };
     attachIce(peer, socket, attemptId);
-    attachConnectionDiagnostics(peer, socket, attemptId);
+    attachConnectionDiagnostics(peer, socket, attemptId, 'receiver');
     startConnectionTimer();
 
     peer.addEventListener('datachannel', ({ channel }) => bindReceiverChannel(channel, socket, attemptId));

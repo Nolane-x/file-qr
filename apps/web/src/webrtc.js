@@ -49,10 +49,15 @@ export function createIceRecoveryController(peer, renegotiate, options = {}) {
   if (typeof renegotiate !== 'function') throw new TypeError('renegotiate must be a function');
 
   const graceMs = Number.isFinite(options.graceMs) ? Math.max(0, options.graceMs) : 5_000;
+  const passiveFailureGraceMs = Number.isFinite(options.passiveFailureGraceMs)
+    ? Math.max(0, options.passiveFailureGraceMs)
+    : 10_000;
+  const activeRestart = options.activeRestart !== false;
   const schedule = options.schedule || ((fn, ms) => setTimeout(fn, ms));
   const cancel = options.cancel || ((id) => clearTimeout(id));
   let graceTimer = null;
   let restartUsed = false;
+  let restartPromise = null;
   let exhausted = false;
   let disposed = false;
 
@@ -62,9 +67,24 @@ export function createIceRecoveryController(peer, renegotiate, options = {}) {
     graceTimer = null;
   }
 
+  function schedulePassiveFailure() {
+    if (graceTimer !== null || exhausted || disposed) return;
+    graceTimer = schedule(() => {
+      graceTimer = null;
+      if (disposed || exhausted) return;
+      exhausted = true;
+      options.onExhausted?.();
+    }, passiveFailureGraceMs);
+  }
+
   async function hardFailure() {
     if (disposed) return 'disposed';
     clearGraceTimer();
+    if (restartPromise) return restartPromise;
+    if (!activeRestart) {
+      schedulePassiveFailure();
+      return 'waiting';
+    }
     if (restartUsed) {
       if (!exhausted) {
         exhausted = true;
@@ -75,8 +95,12 @@ export function createIceRecoveryController(peer, renegotiate, options = {}) {
 
     restartUsed = true;
     peer.restartIce();
-    await renegotiate();
-    return 'restarted';
+    restartPromise = Promise.resolve().then(renegotiate).then(() => 'restarted');
+    try {
+      return await restartPromise;
+    } finally {
+      restartPromise = null;
+    }
   }
 
   async function handleState(state) {
@@ -94,7 +118,13 @@ export function createIceRecoveryController(peer, renegotiate, options = {}) {
       }
       return 'waiting';
     }
-    if (state === 'failed') return hardFailure();
+    if (state === 'failed') {
+      if (!activeRestart) {
+        schedulePassiveFailure();
+        return 'waiting';
+      }
+      return hardFailure();
+    }
     if (state === 'closed') {
       clearGraceTimer();
       return 'closed';
