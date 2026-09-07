@@ -4,7 +4,7 @@
 
 The web and native shells share the same rendezvous model. A sender creates a session through the signaling service and receives a 10-character Crockford Base32 receive code, a private sender token, and an absolute expiry time. The receive code is the receiver capability; the sender token is separately required to occupy the sender role. Signaling state expires exactly 600 seconds after session creation. File bytes never enter the signaling service.
 
-The lease remains reusable while `Date.now() < expiresAt`. A room has one sender and at most one active receiver at a time, but completed or failed receiver attempts do not consume the remaining lease, so receivers may download sequentially during the same 10-minute window. A receiver already admitted before expiry may finish an already-open peer transfer after the signaling lease closes.
+The lease remains reusable while `Date.now() < expiresAt`. A room has one sender; at most one receiver attempt is active at a time. Completed or failed receiver attempts do not consume the remaining lease, so receivers may download sequentially during the same 10-minute window. A receiver already admitted before expiry may finish an already-open peer transfer after the signaling lease closes.
 
 Each receiver admission receives a monotonic `attemptId`. `peer-ready`, WebRTC descriptions, and ICE candidates are associated with that attempt. The clients ignore stale signaling whose `attemptId` does not match the current peer attempt. Receiver readiness is persisted by signaling so a sender reconnect cannot lose an already-admitted receiver.
 
