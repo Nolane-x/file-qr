@@ -21,6 +21,51 @@ test('hard ICE failure restarts and renegotiates at most once per attempt', asyn
   assert.equal(controller.restartUsed, true);
 });
 
+test('concurrent hard failures share the same in-flight restart', async () => {
+  let restarts = 0;
+  let exhausted = 0;
+  let releaseRenegotiation;
+  const renegotiationGate = new Promise((resolve) => { releaseRenegotiation = resolve; });
+  const peer = { restartIce() { restarts += 1; } };
+  const controller = createIceRecoveryController(peer, async () => renegotiationGate, {
+    onExhausted() { exhausted += 1; },
+  });
+
+  const first = controller.handleState('failed');
+  const second = controller.handleState('failed');
+  assert.equal(restarts, 1);
+  assert.equal(exhausted, 0);
+  releaseRenegotiation();
+  assert.equal(await first, 'restarted');
+  assert.equal(await second, 'restarted');
+  assert.equal(await controller.handleState('failed'), 'exhausted');
+  assert.equal(exhausted, 1);
+});
+
+test('passive peer waits for the restart owner instead of creating offer glare', async () => {
+  let scheduled = null;
+  let cancelled = 0;
+  let restarts = 0;
+  let exhausted = 0;
+  const peer = { restartIce() { restarts += 1; } };
+  const controller = createIceRecoveryController(peer, async () => {}, {
+    activeRestart: false,
+    passiveFailureGraceMs: 10_000,
+    schedule(fn, ms) { scheduled = { fn, ms }; return 91; },
+    cancel(id) { if (id === 91) cancelled += 1; },
+    onExhausted() { exhausted += 1; },
+  });
+
+  assert.equal(await controller.handleState('failed'), 'waiting');
+  assert.equal(scheduled.ms, 10_000);
+  assert.equal(restarts, 0);
+  assert.equal(exhausted, 0);
+  assert.equal(await controller.handleState('connected'), 'connected');
+  assert.equal(cancelled, 1);
+  assert.equal(restarts, 0);
+  assert.equal(exhausted, 0);
+});
+
 test('disconnected gets a grace period and connected cancels pending recovery', async () => {
   let scheduled = null;
   let cancelled = 0;
