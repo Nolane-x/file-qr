@@ -48,6 +48,13 @@ test('replayed peer-ready cannot replace an active or newer sender attempt', () 
   assert.match(main, /if \(current\.attempt\.id !== attemptId \|\| current\.socket !== socket \|\| !leaseOpen\(\)\) return;/);
 });
 
+test('sender owns ICE restart while receiver waits to avoid offer glare', () => {
+  assert.match(main, /activeRestart:\s*role === 'sender'/);
+  assert.match(main, /passiveFailureGraceMs:\s*10_000/);
+  assert.match(main, /attachConnectionDiagnostics\(peer, socket, attemptId, 'sender'\)/);
+  assert.match(main, /attachConnectionDiagnostics\(peer, socket, attemptId, 'receiver'\)/);
+});
+
 test('each WebRTC attempt owns one-shot ICE recovery and transport diagnostics', () => {
   assert.match(main, /createIceRecoveryController/);
   assert.match(main, /detectSelectedCandidateType/);
