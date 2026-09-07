@@ -1,6 +1,18 @@
 name: Deploy Signaling
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/signaling/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/signaling.yml'
   workflow_dispatch:
+
+concurrency:
+  group: deploy-signaling-production
+  cancel-in-progress: false
 
 permissions:
   contents: read
