@@ -1,0 +1,54 @@
+name: GitHub Pages Mirror
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: github-pages-mirror-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm install
+      - name: Build GitHub Pages mirror
+        run: npm run build:web
+        env:
+          VITE_BASE: /file-qr/
+          VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
+      - name: Verify repository-base asset URLs
+        shell: bash
+        run: |
+          test -f apps/web/dist/index.html
+          grep -q '/file-qr/assets/' apps/web/dist/index.html
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/web/dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+      - name: Deploy GitHub Pages mirror
+        id: deployment
+        uses: actions/deploy-pages@v5
