@@ -1,4 +1,4 @@
-export const FILE_QR_PROTOCOL_VERSION = 1;
+export const FILE_QR_PROTOCOL_VERSION = 2;
 export const DEFAULT_CHUNK_SIZE = 64 * 1024;
 
 export function* chunkRanges(totalBytes, chunkSize = DEFAULT_CHUNK_SIZE) {
@@ -7,6 +7,12 @@ export function* chunkRanges(totalBytes, chunkSize = DEFAULT_CHUNK_SIZE) {
   for (let start = 0; start < totalBytes; start += chunkSize) {
     yield [start, Math.min(start + chunkSize, totalBytes)];
   }
+}
+
+export function validateResumeOffset(offset, size) {
+  if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid file size');
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > size) throw new Error('Invalid resume offset');
+  return offset;
 }
 
 export function encodeControlMessage(type, payload = {}) {
