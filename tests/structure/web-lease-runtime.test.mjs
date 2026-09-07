@@ -42,6 +42,12 @@ test('sender signaling reconnect schedules another retry only after reconnecting
   assert.match(main, /if \(retrySignal && leaseOpen\(\)\) scheduleSenderSignalReconnect\(\)/);
 });
 
+test('replayed peer-ready cannot replace an active or newer sender attempt', () => {
+  assert.match(main, /if \(current\.attempt\.id === attemptId\) return;/);
+  assert.match(main, /current\.attempt = \{ \.\.\.freshAttempt\(\), id: attemptId \};[\s\S]*await resolveIceServers\(\)/);
+  assert.match(main, /if \(current\.attempt\.id !== attemptId \|\| current\.socket !== socket \|\| !leaseOpen\(\)\) return;/);
+});
+
 test('each WebRTC attempt owns one-shot ICE recovery and transport diagnostics', () => {
   assert.match(main, /createIceRecoveryController/);
   assert.match(main, /detectSelectedCandidateType/);
