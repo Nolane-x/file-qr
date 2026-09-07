@@ -132,10 +132,6 @@ export class SessionRoom extends DurableObject {
       ...(attemptId ? { attemptId } : {}),
     }));
 
-    if (this.ctx.getWebSockets('sender').length && this.ctx.getWebSockets('receiver').length) {
-      this.#broadcast({ type: 'peer-ready', attemptId: session.activeAttemptId });
-    }
-
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -148,14 +144,23 @@ export class SessionRoom extends DurableObject {
       return;
     }
 
-    if (!['description', 'candidate'].includes(payload?.type)) return;
-
     const attachment = ws.deserializeAttachment?.() || {};
     const role = attachment.role;
     if (role !== 'sender' && role !== 'receiver') return;
 
     const session = await this.ctx.storage.get('session');
-    if (!session || !Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId) return;
+    if (!session) return;
+
+    if (payload?.type === 'attempt-ready' && role === 'receiver') {
+      if (!Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId || attachment.attemptId !== session.activeAttemptId) return;
+      if (this.ctx.getWebSockets('sender').length) {
+        this.#broadcast({ type: 'peer-ready', attemptId: session.activeAttemptId });
+      }
+      return;
+    }
+
+    if (!['description', 'candidate'].includes(payload?.type)) return;
+    if (!Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId) return;
     if (role === 'receiver' && attachment.attemptId !== session.activeAttemptId) return;
 
     const target = role === 'sender' ? 'receiver' : 'sender';
