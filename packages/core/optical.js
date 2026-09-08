@@ -52,16 +52,27 @@ export class OpticalAssembler {
   #streamId = null;
   #total = 0;
   #chunks = new Map();
+  #receivedBytes = 0;
+  #maxBytes;
+  #maxFrames;
+
+  constructor(options = {}) {
+    this.#maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY;
+    this.#maxFrames = options.maxFrames ?? Number.POSITIVE_INFINITY;
+  }
 
   accept(frame) {
     const parsed = typeof frame === 'string' ? decodeOpticalFrame(frame) : frame;
+    if (parsed.total > this.#maxFrames) throw new Error('Optical stream exceeds frame limit');
+    if (this.#streamId && (parsed.streamId !== this.#streamId || parsed.total !== this.#total)) throw new Error('Optical stream mismatch');
+    if (this.#chunks.has(parsed.sequence)) return { accepted: false, duplicate: true, received: this.received, total: this.total };
+    if (this.#receivedBytes + parsed.payload.byteLength > this.#maxBytes) throw new Error('Optical stream exceeds receive byte limit');
     if (!this.#streamId) {
       this.#streamId = parsed.streamId;
       this.#total = parsed.total;
     }
-    if (parsed.streamId !== this.#streamId || parsed.total !== this.#total) throw new Error('Optical stream mismatch');
-    if (this.#chunks.has(parsed.sequence)) return { accepted: false, duplicate: true, received: this.received, total: this.total };
     this.#chunks.set(parsed.sequence, parsed.payload);
+    this.#receivedBytes += parsed.payload.byteLength;
     return { accepted: true, duplicate: false, received: this.received, total: this.total };
   }
 
