@@ -8,6 +8,14 @@ function randomBytes(length) {
   return bytes;
 }
 
+function cleanReceiveCode(input) {
+  return String(input ?? '')
+    .toUpperCase()
+    .replace(/O/g, '0')
+    .replace(/[IL]/g, '1')
+    .replace(/[^0-9A-Z]/g, '');
+}
+
 export function createReceiveCode(source = randomBytes(7)) {
   const bytes = source instanceof Uint8Array ? source : new Uint8Array(source);
   if (bytes.length < 7) throw new Error('At least 7 random bytes are required');
@@ -29,21 +37,18 @@ export function createReceiveCode(source = randomBytes(7)) {
 }
 
 export function normalizeReceiveCode(input) {
-  const cleaned = String(input ?? '')
-    .toUpperCase()
-    .replace(/O/g, '0')
-    .replace(/[IL]/g, '1')
-    .replace(/[^0-9A-Z]/g, '');
+  const cleaned = cleanReceiveCode(input);
   return cleaned.length > 5 ? `${cleaned.slice(0, 5)}-${cleaned.slice(5, 10)}` : cleaned;
 }
 
 export function isReceiveCode(input) {
-  const normalized = normalizeReceiveCode(input);
+  const cleaned = cleanReceiveCode(input);
+  if (cleaned.length !== 10) return false;
+  const normalized = `${cleaned.slice(0, 5)}-${cleaned.slice(5)}`;
   return /^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/.test(normalized);
 }
 
 export function compactReceiveCode(input) {
-  const normalized = normalizeReceiveCode(input);
-  if (!isReceiveCode(normalized)) throw new Error('Invalid receive code');
-  return normalized.replace('-', '');
+  if (!isReceiveCode(input)) throw new Error('Invalid receive code');
+  return normalizeReceiveCode(input).replace('-', '');
 }

@@ -1,4 +1,5 @@
 const DEFAULT_MEMORY_LIMIT = 512 * 1024 * 1024;
+export const OPFS_DURABILITY_CHECKPOINT_BYTES = 1024 * 1024;
 const memoryPartials = new Map();
 
 function safePart(value) {
@@ -106,6 +107,9 @@ async function createOpfsSink(meta, options = {}) {
   const key = options.key || partialStorageKey(options.leaseCode, meta.fileId || options.fileId);
   const partName = `${key}.part`;
   const metaName = `${key}.json`;
+  const checkpointBytes = Number.isSafeInteger(options.checkpointBytes) && options.checkpointBytes > 0
+    ? options.checkpointBytes
+    : OPFS_DURABILITY_CHECKPOINT_BYTES;
   let savedMeta = await readPartialMeta(root, metaName);
   let existingSize = 0;
 
@@ -136,15 +140,23 @@ async function createOpfsSink(meta, options = {}) {
   if (!handle) handle = await root.getFileHandle(partName, { create: true });
   if (!savedMeta) await writePartialMeta(root, metaName, { ...meta });
 
-  const writable = await handle.createWritable({ keepExistingData: existingSize > 0 });
-  if (existingSize > 0) await writable.seek(existingSize);
   let received = existingSize;
-  let closed = false;
+  let committed = existingSize;
+  let writable = null;
 
-  async function closeWritable() {
-    if (closed) return;
-    await writable.close();
-    closed = true;
+  async function ensureWritable() {
+    if (writable) return writable;
+    writable = await handle.createWritable({ keepExistingData: received > 0 });
+    if (received > 0) await writable.seek(received);
+    return writable;
+  }
+
+  async function checkpointWritable() {
+    if (!writable) return;
+    const active = writable;
+    writable = null;
+    await active.close();
+    committed = received;
   }
 
   return {
@@ -152,24 +164,28 @@ async function createOpfsSink(meta, options = {}) {
     get offset() { return received; },
     async write(bytes) {
       if (received + bytes.byteLength > meta.size) throw new Error('Received bytes exceed advertised file size');
-      await writable.write(bytes);
+      const active = await ensureWritable();
+      await active.write(bytes);
       received += bytes.byteLength;
+      if (received === meta.size || received - committed >= checkpointBytes) {
+        await checkpointWritable();
+      }
     },
     async close() {
       if (received !== meta.size) throw new Error('Received file is incomplete');
-      await closeWritable();
+      await checkpointWritable();
       const file = await handle.getFile();
       return new File([file], meta.name, { type: meta.type || file.type || 'application/octet-stream', lastModified: Date.now() });
     },
     async abort({ discard = false } = {}) {
-      try { await closeWritable(); } catch { /* preserve whatever was committed */ }
+      try { await checkpointWritable(); } catch { /* preserve the last completed checkpoint */ }
       if (discard) {
         await removeEntry(root, partName);
         await removeEntry(root, metaName);
       }
     },
     async cleanup() {
-      try { await closeWritable(); } catch { /* continue cleanup */ }
+      try { await checkpointWritable(); } catch { /* continue cleanup */ }
       await removeEntry(root, partName);
       await removeEntry(root, metaName);
     },

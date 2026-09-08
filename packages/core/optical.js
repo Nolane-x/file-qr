@@ -1,6 +1,7 @@
 import { crc32 } from './crc32.js';
 
 export const OPTICAL_VERSION = 'FQR1';
+export const MIN_OPTICAL_PAYLOAD_BYTES = 32;
 export const DEFAULT_OPTICAL_PAYLOAD_BYTES = 420;
 
 function toBase64Url(bytes) {
@@ -20,7 +21,7 @@ function fromBase64Url(text) {
 export function encodeOpticalFrames(input, options = {}) {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   const payloadBytes = options.payloadBytes ?? DEFAULT_OPTICAL_PAYLOAD_BYTES;
-  if (!Number.isInteger(payloadBytes) || payloadBytes < 32 || payloadBytes > 1024) throw new Error('Invalid optical payload size');
+  if (!Number.isInteger(payloadBytes) || payloadBytes < MIN_OPTICAL_PAYLOAD_BYTES || payloadBytes > 1024) throw new Error('Invalid optical payload size');
   const streamId = String(options.streamId ?? '').toUpperCase();
   if (!/^[A-Z0-9]{8}$/.test(streamId)) throw new Error('streamId must be 8 uppercase alphanumeric characters');
   const total = Math.max(1, Math.ceil(bytes.length / payloadBytes));
@@ -52,16 +53,27 @@ export class OpticalAssembler {
   #streamId = null;
   #total = 0;
   #chunks = new Map();
+  #receivedBytes = 0;
+  #maxBytes;
+  #maxFrames;
+
+  constructor(options = {}) {
+    this.#maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY;
+    this.#maxFrames = options.maxFrames ?? Number.POSITIVE_INFINITY;
+  }
 
   accept(frame) {
     const parsed = typeof frame === 'string' ? decodeOpticalFrame(frame) : frame;
+    if (parsed.total > this.#maxFrames) throw new Error('Optical stream exceeds frame limit');
+    if (this.#streamId && (parsed.streamId !== this.#streamId || parsed.total !== this.#total)) throw new Error('Optical stream mismatch');
+    if (this.#chunks.has(parsed.sequence)) return { accepted: false, duplicate: true, received: this.received, total: this.total };
+    if (this.#receivedBytes + parsed.payload.byteLength > this.#maxBytes) throw new Error('Optical stream exceeds receive byte limit');
     if (!this.#streamId) {
       this.#streamId = parsed.streamId;
       this.#total = parsed.total;
     }
-    if (parsed.streamId !== this.#streamId || parsed.total !== this.#total) throw new Error('Optical stream mismatch');
-    if (this.#chunks.has(parsed.sequence)) return { accepted: false, duplicate: true, received: this.received, total: this.total };
     this.#chunks.set(parsed.sequence, parsed.payload);
+    this.#receivedBytes += parsed.payload.byteLength;
     return { accepted: true, duplicate: false, received: this.received, total: this.total };
   }
 
