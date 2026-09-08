@@ -19,11 +19,11 @@ async function waitForState(page, expected, timeout = 60_000) {
 }
 
 async function waitForPartialProgress(page, minPercent) {
-  await page.waitForFunction((minimum) => {
+  await page.waitForFunction((minPercent) => {
     if (document.body?.dataset?.state !== 'receiving') return false;
     const raw = document.querySelector('[data-progress-value]')?.textContent || '';
     const percent = Number.parseInt(raw, 10);
-    return Number.isFinite(percent) && percent >= minimum && percent < 95;
+    return Number.isFinite(percent) && percent >= minPercent && percent < 95;
   }, minPercent, { timeout: 60_000 });
 }
 
