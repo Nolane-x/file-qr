@@ -81,3 +81,15 @@ test('draft tag must exactly match the package-version tag being recovered', asy
 
   assert.equal(decision, 'foreign-or-ambiguous-draft');
 });
+
+test('published release is classified as existing and never enters draft recovery', async () => {
+  const decision = await classify({
+    isDraft: false,
+    tagName: tag,
+    author: { login: 'Nolane-x' },
+    targetCommitish: 'main',
+    body: 'Published release notes without any CI ownership marker',
+  });
+
+  assert.equal(decision, 'published-existing-release');
+});
