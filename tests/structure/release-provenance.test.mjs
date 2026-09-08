@@ -34,14 +34,18 @@ test('release publication includes a deterministic SHA-256 manifest and verifies
   assert.match(workflow, /steps\.release_state\.outputs\.exists\s*!=\s*'true'/);
 });
 
-test('published package releases are skipped while stale drafts are recoverable', () => {
+test('published releases are skipped, owned stale drafts recover, and foreign drafts fail closed', () => {
   const workflow = fs.readFileSync(workflowUrl, 'utf8');
 
   assert.match(workflow, /gh release view/);
-  assert.match(workflow, /--json isDraft/);
-  assert.match(workflow, /is_draft=/);
-  assert.match(workflow, /Removing stale draft release \$TAG before rebuilding it\./);
+  assert.match(workflow, /--json author,body,isDraft,tagName,targetCommitish/);
+  assert.match(workflow, /classify-release-draft\.mjs/);
+  assert.match(workflow, /recoverable-owned-draft/);
+  assert.match(workflow, /Removing owned stale draft release \$TAG before rebuilding it\./);
   assert.match(workflow, /gh release delete "\$TAG"[\s\S]*--cleanup-tag[\s\S]*--yes/);
+  assert.match(workflow, /published-existing-release/);
   assert.match(workflow, /exists=true/);
   assert.match(workflow, /Release .* already exists; leaving it unchanged\./);
+  assert.match(workflow, /foreign-or-ambiguous-draft/);
+  assert.match(workflow, /Refusing to delete foreign or ambiguous draft release \$TAG\./);
 });

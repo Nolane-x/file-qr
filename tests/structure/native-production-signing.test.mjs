@@ -112,13 +112,17 @@ test('future release publication is draft-first and verifies before immutable pu
   assert.ok(publishIndex > verifyIndex, 'draft must be published only after verification succeeds');
 });
 
-test('failed draft publication is recoverable without replacing an existing published release', () => {
-  assert.match(workflow, /gh release view "\$TAG"[\s\S]*--json isDraft/);
-  assert.match(workflow, /is_draft=/);
+test('failed owned draft publication is recoverable without replacing published or foreign releases', () => {
+  assert.match(workflow, /gh release view "\$TAG"[\s\S]*--json author,body,isDraft,tagName,targetCommitish/);
+  assert.match(workflow, /classify-release-draft\.mjs/);
+  assert.match(workflow, /recoverable-owned-draft/);
   assert.match(
     workflow,
-    /if \[ "\$is_draft" = ['"]true['"] \]; then[\s\S]*gh release delete "\$TAG"[\s\S]*--cleanup-tag[\s\S]*--yes/,
+    /recoverable-owned-draft\)[\s\S]*gh release delete "\$TAG"[\s\S]*--cleanup-tag[\s\S]*--yes/,
   );
-  assert.match(workflow, /Removing stale draft release \$TAG before rebuilding it\./);
+  assert.match(workflow, /Removing owned stale draft release \$TAG before rebuilding it\./);
+  assert.match(workflow, /published-existing-release/);
   assert.match(workflow, /Release \$TAG already exists; leaving it unchanged\./);
+  assert.match(workflow, /foreign-or-ambiguous-draft/);
+  assert.match(workflow, /Refusing to delete foreign or ambiguous draft release \$TAG\./);
 });

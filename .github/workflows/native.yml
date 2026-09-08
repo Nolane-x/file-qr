@@ -308,18 +308,40 @@ jobs:
           TAG="v${VERSION}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            is_draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
-            if [ "$is_draft" = 'true' ]; then
-              echo "Removing stale draft release $TAG before rebuilding it."
-              gh release delete "$TAG" \
-                --repo "$GITHUB_REPOSITORY" \
-                --cleanup-tag \
-                --yes
-              echo "exists=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "exists=true" >> "$GITHUB_OUTPUT"
-              echo "Release $TAG already exists; leaving it unchanged."
-            fi
+            RELEASE_STATE_JSON="$RUNNER_TEMP/file-qr-release-state.json"
+            gh release view "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json author,body,isDraft,tagName,targetCommitish \
+              > "$RELEASE_STATE_JSON"
+            decision="$(
+              node scripts/classify-release-draft.mjs \
+                "$RELEASE_STATE_JSON" \
+                "$TAG" \
+                "$GITHUB_REPOSITORY" \
+                ".github/workflows/native.yml"
+            )"
+            case "$decision" in
+              recoverable-owned-draft)
+                echo "Removing owned stale draft release $TAG before rebuilding it."
+                gh release delete "$TAG" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --cleanup-tag \
+                  --yes
+                echo "exists=false" >> "$GITHUB_OUTPUT"
+                ;;
+              published-existing-release)
+                echo "exists=true" >> "$GITHUB_OUTPUT"
+                echo "Release $TAG already exists; leaving it unchanged."
+                ;;
+              foreign-or-ambiguous-draft)
+                echo "Refusing to delete foreign or ambiguous draft release $TAG." >&2
+                exit 1
+                ;;
+              *)
+                echo "Unknown release ownership decision: $decision" >&2
+                exit 1
+                ;;
+            esac
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -355,6 +377,7 @@ jobs:
           TAG: ${{ steps.release_state.outputs.tag }}
         run: |
           set -euo pipefail
+          OWNERSHIP_MARKER="<!-- file-qr-native-release:v1 repo=$GITHUB_REPOSITORY workflow=.github/workflows/native.yml target=$GITHUB_SHA -->"
           gh release create "$TAG" \
             release-assets/FileQR-Windows-x64-setup.exe \
             release-assets/FileQR-Android-arm64.apk \
@@ -362,6 +385,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "File QR $TAG" \
+            --notes "$OWNERSHIP_MARKER" \
             --generate-notes \
             --draft
 
