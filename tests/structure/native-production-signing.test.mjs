@@ -113,5 +113,5 @@ test('failed draft publication is recoverable without replacing an existing publ
     /if \[ "\$is_draft" = ['"]true['"] \]; then[\s\S]*gh release delete "\$TAG"[\s\S]*--cleanup-tag[\s\S]*--yes/,
   );
   assert.match(workflow, /Removing stale draft release \$TAG before rebuilding it\./);
-  assert.match(workflow, /Published release \$TAG already exists; leaving it unchanged\./);
+  assert.match(workflow, /Release \$TAG already exists; leaving it unchanged\./);
 });
