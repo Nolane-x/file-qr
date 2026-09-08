@@ -305,8 +305,18 @@ jobs:
           TAG="v${VERSION}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release $TAG already exists; leaving it unchanged."
+            is_draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+            if [ "$is_draft" = 'true' ]; then
+              echo "Removing stale draft release $TAG before rebuilding it."
+              gh release delete "$TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --cleanup-tag \
+                --yes
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "Release $TAG already exists; leaving it unchanged."
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -334,7 +344,7 @@ jobs:
             release-assets/FileQR-Android-arm64.apk
             release-assets/SHA256SUMS.txt
 
-      - name: Publish package-version release once
+      - name: Create draft package-version release
         if: steps.release_state.outputs.exists != 'true'
         shell: bash
         env:
@@ -349,9 +359,10 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "File QR $TAG" \
-            --generate-notes
+            --generate-notes \
+            --draft
 
-      - name: Verify published release bytes and attestations
+      - name: Verify draft release bytes and attestations
         if: steps.release_state.outputs.exists != 'true'
         shell: bash
         env:
@@ -359,6 +370,7 @@ jobs:
           TAG: ${{ steps.release_state.outputs.tag }}
         run: |
           set -euo pipefail
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = 'true'
           rm -rf published-release
           mkdir -p published-release
           gh release download "$TAG" \
@@ -372,3 +384,15 @@ jobs:
           gh attestation verify FileQR-Windows-x64-setup.exe --repo "$GITHUB_REPOSITORY"
           gh attestation verify FileQR-Android-arm64.apk --repo "$GITHUB_REPOSITORY"
           gh attestation verify SHA256SUMS.txt --repo "$GITHUB_REPOSITORY"
+
+      - name: Publish verified package-version release
+        if: steps.release_state.outputs.exists != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_state.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false \
+            --repo "$GITHUB_REPOSITORY"
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = 'false'
