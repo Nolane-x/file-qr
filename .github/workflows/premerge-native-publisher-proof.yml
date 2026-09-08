@@ -31,6 +31,68 @@ jobs:
           fi
           echo "sha=$(printf '%s' "$CANDIDATE_SHA" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout trusted main snapshot
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind candidate to trusted main and audited publisher-proof scope
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          TRUSTED_MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          CANDIDATE_SHA="$(printf '%s' "$CANDIDATE_SHA" | tr '[:upper:]' '[:lower:]')"
+          TRUSTED_MAIN_SHA="$(printf '%s' "$TRUSTED_MAIN_SHA" | tr '[:upper:]' '[:lower:]')"
+
+          actual_main="$(git rev-parse HEAD | tr '[:upper:]' '[:lower:]')"
+          if [ "$actual_main" != "$TRUSTED_MAIN_SHA" ]; then
+            echo 'trusted main SHA mismatch after checkout' >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin "$CANDIDATE_SHA"
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+          if ! git merge-base --is-ancestor "$TRUSTED_MAIN_SHA" "$CANDIDATE_SHA"; then
+            echo 'candidate must contain the current trusted main SHA' >&2
+            exit 1
+          fi
+
+          mapfile -t changed_paths < <(git diff --name-only "$TRUSTED_MAIN_SHA" "$CANDIDATE_SHA" | LC_ALL=C sort)
+          required_paths=(
+            '.github/workflows/native.yml'
+            'scripts/classify-release-draft.mjs'
+            'scripts/configure-android-signing.mjs'
+            'scripts/configure-windows-signing.mjs'
+            'tests/structure/native-production-signing.test.mjs'
+            'tests/structure/release-draft-ownership.test.mjs'
+            'tests/structure/release-provenance.test.mjs'
+            'tests/unit/native-signing-helpers.test.mjs'
+          )
+          mapfile -t required_paths < <(printf '%s\n' "${required_paths[@]}" | LC_ALL=C sort)
+
+          scope_error=false
+          if [ "${#changed_paths[@]}" -ne "${#required_paths[@]}" ]; then
+            scope_error=true
+          else
+            for index in "${!required_paths[@]}"; do
+              if [ "${changed_paths[$index]}" != "${required_paths[$index]}" ]; then
+                scope_error=true
+                break
+              fi
+            done
+          fi
+
+          if [ "$scope_error" = true ]; then
+            echo 'candidate contains changes outside publisher-proof scope or is missing required signing/release changes' >&2
+            printf 'Observed candidate paths:\n' >&2
+            printf '  %s\n' "${changed_paths[@]}" >&2
+            exit 1
+          fi
+
   build_windows:
     needs: validate
     runs-on: windows-latest

@@ -22,6 +22,31 @@ test('publisher proof is manual and main-only', () => {
   assert.match(workflow, /\^\[0-9a-fA-F\]\{40\}\$/);
 });
 
+test('publisher proof binds candidates to trusted main and the audited signing-release scope', () => {
+  const validate = section('  validate:', '  build_windows:');
+  assert.match(validate, /actions\/checkout@v6/);
+  assert.match(validate, /github\.sha/);
+  assert.match(validate, /fetch-depth:\s*0/);
+  assert.match(validate, /git fetch[^\n]*CANDIDATE_SHA/);
+  assert.match(validate, /merge-base\s+--is-ancestor[^\n]*TRUSTED_MAIN_SHA[^\n]*CANDIDATE_SHA/);
+  assert.match(validate, /git diff\s+--name-only[^\n]*TRUSTED_MAIN_SHA[^\n]*CANDIDATE_SHA/);
+  assert.match(validate, /candidate contains changes outside publisher-proof scope/i);
+
+  const allowedPaths = [
+    '.github/workflows/native.yml',
+    'scripts/classify-release-draft.mjs',
+    'scripts/configure-android-signing.mjs',
+    'scripts/configure-windows-signing.mjs',
+    'tests/structure/native-production-signing.test.mjs',
+    'tests/structure/release-draft-ownership.test.mjs',
+    'tests/structure/release-provenance.test.mjs',
+    'tests/unit/native-signing-helpers.test.mjs',
+  ];
+  for (const path of allowedPaths) {
+    assert.ok(validate.includes(path), `trusted candidate scope must allow ${path}`);
+  }
+});
+
 test('candidate build jobs are secretless and bind exact checkout SHA', () => {
   const builds = section('  build_windows:', '  sign_windows:') + section('  build_android:', '  sign_android:');
   assert.doesNotMatch(builds, /secrets\./);
