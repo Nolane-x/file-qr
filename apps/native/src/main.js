@@ -2,7 +2,7 @@ import '../../web/src/style.css';
 import './native.css';
 import encodeQR from 'qr';
 import { QRCanvas, frameLoop, rearCamera } from 'qr/dom.js';
-import { encodeOpticalFrames, OpticalAssembler } from '../../../packages/core/optical.js';
+import { encodeOpticalFrames, MIN_OPTICAL_PAYLOAD_BYTES, OpticalAssembler } from '../../../packages/core/optical.js';
 import { encodeFileEnvelope, decodeFileEnvelope } from '../../../packages/core/file-envelope.js';
 import { parseReceivePayload } from '../../web/src/receive-payload.js';
 import { createAndroidBarcodeScanner } from './android-barcode.js';
@@ -33,6 +33,8 @@ const stopButton = document.querySelector('[data-optical-stop]');
 let opticalSession = { stop: null, timer: null, camera: null, loop: null };
 let cancelNetworkScan = () => Promise.resolve();
 const OPTICAL_MAX_BYTES = 8 * 1024 * 1024;
+const OPTICAL_RECEIVE_MAX_BYTES = OPTICAL_MAX_BYTES + 1024 * 1024 + 4;
+const OPTICAL_RECEIVE_MAX_FRAMES = Math.ceil(OPTICAL_RECEIVE_MAX_BYTES / MIN_OPTICAL_PAYLOAD_BYTES);
 
 function setMode(mode) {
   const optical = mode === 'optical';
@@ -117,7 +119,10 @@ async function startOpticalReceive() {
   qr.innerHTML = '';
   video.hidden = false;
   overlay.hidden = false;
-  const assembler = new OpticalAssembler();
+  const assembler = new OpticalAssembler({
+    maxBytes: OPTICAL_RECEIVE_MAX_BYTES,
+    maxFrames: OPTICAL_RECEIVE_MAX_FRAMES,
+  });
   let camera;
   try {
     camera = await rearCamera(video);
