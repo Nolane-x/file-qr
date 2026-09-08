@@ -1,8 +1,7 @@
 import { isReceiveCode, normalizeReceiveCode } from '../../../packages/core/session.js';
 
 function normalizeIfValid(value) {
-  const normalized = normalizeReceiveCode(value);
-  return isReceiveCode(normalized) ? normalized : null;
+  return isReceiveCode(value) ? normalizeReceiveCode(value) : null;
 }
 
 export function parseReceivePayload(input) {
