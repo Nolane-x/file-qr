@@ -26,3 +26,30 @@ test('second receiver waits for rendered resume evidence before sampling it', ()
   assert.ok(resumedWait >= 0, 'second receiver must wait for observable resumed evidence');
   assert.ok(progressSample > resumedWait, 'resume evidence must be sampled only after resumed synchronization completes');
 });
+
+test('first receiver interrupts only after at least one durable OPFS checkpoint', () => {
+  assert.match(
+    harness,
+    /OPFS_DURABILITY_CHECKPOINT_BYTES/,
+    'browser harness must bind interruption timing to the production OPFS durability boundary',
+  );
+  assert.match(
+    harness,
+    /MIN_DURABLE_PERCENT/,
+    'browser harness must derive an observable progress floor beyond the durability checkpoint',
+  );
+
+  const helper = harness.match(/async function waitForPartialProgress\(page, minPercent\) \{([\s\S]*?)\n\}/);
+  assert.ok(helper, 'partial-progress helper must accept the durable progress floor');
+  assert.match(helper[1], /percent >= minPercent/, 'interruption must not occur before the durable progress floor');
+
+  const receiver1Start = harness.indexOf('const receiver1 =');
+  const receiver1Close = harness.indexOf('await receiver1.close()', receiver1Start);
+  assert.ok(receiver1Start >= 0 && receiver1Close > receiver1Start, 'first receiver interruption flow must be discoverable');
+  const receiver1Flow = harness.slice(receiver1Start, receiver1Close);
+  assert.match(
+    receiver1Flow,
+    /waitForPartialProgress\(receiver1, MIN_DURABLE_PERCENT\)/,
+    'the live browser interruption must wait for a completed durability checkpoint',
+  );
+});
