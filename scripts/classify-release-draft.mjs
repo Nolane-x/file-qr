@@ -5,6 +5,13 @@ export function classifyReleaseDraft(metadata, {
   expectedRepository,
   expectedWorkflow,
 } = {}) {
+  if (metadata?.isDraft === false) {
+    return 'published-existing-release';
+  }
+  if (metadata?.isDraft !== true) {
+    return 'foreign-or-ambiguous-draft';
+  }
+
   if (metadata?.tagName !== expectedTag) {
     return 'foreign-or-ambiguous-draft';
   }
