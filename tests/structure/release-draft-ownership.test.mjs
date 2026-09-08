@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const helperUrl = new URL('../../scripts/classify-release-draft.mjs', import.meta.url);
 
@@ -92,4 +96,27 @@ test('published release is classified as existing and never enters draft recover
   });
 
   assert.equal(decision, 'published-existing-release');
+});
+
+test('classifier CLI emits the decision for workflow metadata JSON', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileqr-release-state-'));
+  const metadataPath = path.join(dir, 'release.json');
+  fs.writeFileSync(metadataPath, JSON.stringify({
+    isDraft: true,
+    tagName: tag,
+    author: { login: 'github-actions[bot]' },
+    targetCommitish: target,
+    body: `${marker}\n\nGenerated notes`,
+  }));
+
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(helperUrl),
+    metadataPath,
+    tag,
+    repo,
+    workflow,
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'recoverable-owned-draft');
 });
