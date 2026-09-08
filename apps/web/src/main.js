@@ -219,6 +219,7 @@ async function cleanupLease({ keepView = false, discardPartial = false } = {}) {
 
 async function failTransfer(detail) {
   const senderLease = current.role === 'sender' && Boolean(current.file);
+  const receiverCanResume = current.role === 'receiver' && leaseOpen() && !current.leaseExpired;
   const transferred = current.attempt.transferred;
   if (senderLease && leaseOpen() && !current.leaseExpired) {
     await cleanupAttempt();
@@ -232,8 +233,8 @@ async function failTransfer(detail) {
     return;
   }
 
-  await cleanupLease({ keepView: true, discardPartial: false });
-  const retryCopy = transferred > 0
+  await cleanupLease({ keepView: true, discardPartial: !receiverCanResume });
+  const retryCopy = receiverCanResume && transferred > 0
     ? `${detail} Partial data is saved locally. Retry the same code to resume.`
     : detail;
   setState('failed', retryCopy);
@@ -269,7 +270,7 @@ async function handleLeaseExpiry() {
     ui.status.textContent = 'The 10-minute receive window is closed. The transfer already in progress may finish.';
     return;
   }
-  await cleanupLease({ keepView: true });
+  await cleanupLease({ keepView: true, discardPartial: true });
   setState('expired');
 }
 
@@ -705,7 +706,7 @@ async function receiveFile(rawCode) {
       if (event.code === 4000 || !leaseOpen()) {
         current.leaseExpired = true;
         if (current.attempt.channel?.readyState !== 'open') {
-          cleanupLease({ keepView: true }).then(() => setState('expired')).catch(() => {});
+          cleanupLease({ keepView: true, discardPartial: true }).then(() => setState('expired')).catch(() => {});
         }
       }
     });
