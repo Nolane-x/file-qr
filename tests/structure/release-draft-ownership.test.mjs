@@ -55,3 +55,17 @@ test('bot-authored draft without the exact workflow ownership marker fails close
 
   assert.equal(decision, 'foreign-or-ambiguous-draft');
 });
+
+test('ownership marker target must exactly match release targetCommitish', async () => {
+  const otherTarget = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const wrongMarker = `<!-- file-qr-native-release:v1 repo=${repo} workflow=${workflow} target=${otherTarget} -->`;
+  const decision = await classify({
+    isDraft: true,
+    tagName: tag,
+    author: { login: 'github-actions[bot]' },
+    targetCommitish: target,
+    body: `${wrongMarker}\n\nGenerated notes`,
+  });
+
+  assert.equal(decision, 'foreign-or-ambiguous-draft');
+});
