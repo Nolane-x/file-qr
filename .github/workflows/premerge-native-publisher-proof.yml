@@ -257,9 +257,26 @@ jobs:
     needs: [validate, build_android]
     runs-on: ubuntu-latest
     steps:
-      - uses: android-actions/setup-android@v3
-      - name: Install Android signing tools
-        run: sdkmanager "build-tools;36.0.0"
+      - name: Assert hosted Android signing toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}" || {
+            echo 'ANDROID_HOME is unavailable on the trusted hosted runner.' >&2
+            exit 1
+          }
+          test -x "$ANDROID_HOME/build-tools/36.0.0/zipalign" || {
+            echo 'Hosted Android Build-tools 36.0.0 zipalign is unavailable.' >&2
+            exit 1
+          }
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" || {
+            echo 'Hosted Android Build-tools 36.0.0 apksigner is unavailable.' >&2
+            exit 1
+          }
+          command -v keytool >/dev/null || {
+            echo 'keytool is unavailable on the trusted hosted runner.' >&2
+            exit 1
+          }
       - name: Download opaque Android candidate
         uses: actions/download-artifact@v5
         with:
@@ -411,7 +428,6 @@ jobs:
           import os
           import re
           from datetime import datetime, timezone
-          from pathlib import Path
 
           hex40 = re.compile(r'^[0-9a-f]{40}$')
           hex64 = re.compile(r'^[0-9a-f]{64}$')
