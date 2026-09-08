@@ -29,3 +29,24 @@ test('optical frame rejects corrupted payload by crc', () => {
   const corrupted = frame.slice(0, -1) + (frame.endsWith('A') ? 'B' : 'A');
   assert.throws(() => decodeOpticalFrame(corrupted), /CRC/i);
 });
+
+test('optical assembler rejects payload bytes beyond its configured receive budget', () => {
+  const data = Uint8Array.from({ length: 200 }, (_, i) => i & 255);
+  const frames = encodeOpticalFrames(data, { streamId: 'STREAM03', payloadBytes: 100 });
+  const assembler = new OpticalAssembler({ maxBytes: 150 });
+
+  assert.equal(assembler.accept(frames[0]).accepted, true);
+  assert.throws(() => assembler.accept(frames[1]), /receive byte limit/i);
+  assert.equal(assembler.received, 1, 'rejected frame must not be retained');
+});
+
+test('optical assembler rejects streams beyond its configured frame budget', () => {
+  const [frame] = encodeOpticalFrames(new Uint8Array(32), { streamId: 'STREAM04', payloadBytes: 32 });
+  const parts = frame.split('|');
+  parts[3] = '3';
+  const oversizedDeclaration = parts.join('|');
+  const assembler = new OpticalAssembler({ maxFrames: 2 });
+
+  assert.throws(() => assembler.accept(oversizedDeclaration), /frame limit/i);
+  assert.equal(assembler.received, 0, 'rejected stream must not initialize assembler state');
+});
