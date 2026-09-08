@@ -15,3 +15,11 @@ test('receive payload parser accepts codes and receive URLs only', async () => {
   assert.equal(parseReceivePayload('https://example.com/?receive=bad'), null);
   assert.equal(parseReceivePayload('not a code'), null);
 });
+
+test('receive URL parser rejects overlong receive-code aliases before normalization', async () => {
+  assert.ok(fs.existsSync(moduleUrl), 'receive-payload module must exist');
+  const { parseReceivePayload } = await import(moduleUrl);
+  assert.equal(parseReceivePayload('ABCDE-FGHJKX'), null);
+  assert.equal(parseReceivePayload('https://example.com/?receive=ABCDE-FGHJKX'), null);
+  assert.equal(parseReceivePayload('https://example.com/?receive=ABCDE-FGHJK-EXTRA'), null);
+});

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createReceiveCode, normalizeReceiveCode, isReceiveCode } from '../../packages/core/session.js';
+import { compactReceiveCode, createReceiveCode, normalizeReceiveCode, isReceiveCode } from '../../packages/core/session.js';
 
 test('receive code uses ten Crockford base32 characters grouped 5-5', () => {
   const bytes = Uint8Array.from([0,1,2,3,4,5,6,7]);
@@ -18,4 +18,10 @@ test('receive code validation rejects malformed codes', () => {
   assert.equal(isReceiveCode('ABCDE-FGHJK'), true);
   assert.equal(isReceiveCode('ABCDE-UKLMN'), false);
   assert.equal(isReceiveCode('SHORT'), false);
+});
+
+test('receive code validation rejects overlong aliases instead of truncating to a valid session', () => {
+  assert.equal(isReceiveCode('ABCDE-FGHJKX'), false);
+  assert.equal(isReceiveCode('ABCDE-FGHJK-EXTRA'), false);
+  assert.throws(() => compactReceiveCode('ABCDE-FGHJKX'), /Invalid receive code/);
 });

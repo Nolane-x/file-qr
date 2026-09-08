@@ -145,3 +145,27 @@ test('fresh OPFS transfer truncates an orphaned stale part when metadata is abse
   assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [7, 8, 9]);
   await sink.cleanup();
 });
+
+test('OPFS checkpoints preserve resumable bytes across abrupt page termination', async (t) => {
+  const leaseCode = 'ABCDE-FGHJK';
+  const checkpointBytes = 1024 * 1024;
+  const durableMeta = {
+    ...meta,
+    fileId: 'DURABLE1',
+    name: 'durable.bin',
+    size: checkpointBytes * 2,
+  };
+  const root = createFakeOpfs();
+  installFakeStorage(t, root);
+
+  const first = await createReceiveSink(durableMeta, { leaseCode, fileId: durableMeta.fileId });
+  await first.write(new Uint8Array(checkpointBytes).fill(0x5a));
+
+  // Deliberately do not close or abort the first sink. A real tab/page can disappear
+  // before asynchronous pagehide cleanup finishes, so durable resume must not depend
+  // on that lifecycle callback committing the only copy of received bytes.
+  const second = await createReceiveSink(durableMeta, { leaseCode, fileId: durableMeta.fileId });
+  assert.equal(second.offset, checkpointBytes, 'a completed durability checkpoint must be visible to the next receiver runtime');
+
+  await second.abort({ discard: true });
+});
