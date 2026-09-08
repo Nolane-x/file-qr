@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
 export function classifyReleaseDraft(metadata, {
@@ -35,4 +39,24 @@ export function classifyReleaseDraft(metadata, {
   }
 
   return 'recoverable-owned-draft';
+}
+
+function runCli() {
+  const [metadataPath, expectedTag, expectedRepository, expectedWorkflow] = process.argv.slice(2);
+  if (![metadataPath, expectedTag, expectedRepository, expectedWorkflow].every(Boolean)) {
+    throw new Error('usage: classify-release-draft.mjs <metadata.json> <tag> <repository> <workflow>');
+  }
+
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+  const decision = classifyReleaseDraft(metadata, {
+    expectedTag,
+    expectedRepository,
+    expectedWorkflow,
+  });
+  process.stdout.write(`${decision}\n`);
+}
+
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (invokedPath === fileURLToPath(import.meta.url)) {
+  runCli();
 }
