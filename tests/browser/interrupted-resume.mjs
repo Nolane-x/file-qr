@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { OPFS_DURABILITY_CHECKPOINT_BYTES } from '../../apps/web/src/storage.js';
 
 const WEB_ORIGIN = process.env.FILE_QR_BROWSER_ORIGIN || 'http://127.0.0.1:5173';
 const TEST_BYTES = Number(process.env.FILE_QR_BROWSER_TEST_BYTES || 32 * 1024 * 1024);
+const MIN_DURABLE_PERCENT = Math.ceil((OPFS_DURABILITY_CHECKPOINT_BYTES / TEST_BYTES) * 100) + 1;
 
 async function waitForState(page, expected, timeout = 60_000) {
   await page.waitForFunction(
@@ -16,13 +18,13 @@ async function waitForState(page, expected, timeout = 60_000) {
   );
 }
 
-async function waitForPartialProgress(page) {
-  await page.waitForFunction(() => {
+async function waitForPartialProgress(page, minPercent) {
+  await page.waitForFunction((minPercent) => {
     if (document.body?.dataset?.state !== 'receiving') return false;
     const raw = document.querySelector('[data-progress-value]')?.textContent || '';
     const percent = Number.parseInt(raw, 10);
-    return Number.isFinite(percent) && percent > 0 && percent < 95;
-  }, null, { timeout: 60_000 });
+    return Number.isFinite(percent) && percent >= minPercent && percent < 95;
+  }, minPercent, { timeout: 60_000 });
 }
 
 async function waitForResumedTransfer(page, timeout = 60_000) {
@@ -51,6 +53,11 @@ function installSlowFileSlices(page) {
 }
 
 test('receiver interruption preserves partial bytes and resumes with the same lease code', { timeout: 180_000 }, async (t) => {
+  assert.ok(
+    MIN_DURABLE_PERCENT < 95,
+    'browser resume fixture must be large enough to interrupt after a durability checkpoint and before completion',
+  );
+
   const fixturePath = path.join(os.tmpdir(), `file-qr-browser-resume-${process.pid}.bin`);
   fs.writeFileSync(fixturePath, Buffer.alloc(TEST_BYTES, 0x5a));
   t.after(() => fs.rmSync(fixturePath, { force: true }));
@@ -73,13 +80,16 @@ test('receiver interruption preserves partial bytes and resumes with the same le
   await receiver1.goto(WEB_ORIGIN, { waitUntil: 'domcontentloaded' });
   await receiver1.locator('[data-code-input]').fill(code);
   await receiver1.locator('[data-receive-form]').evaluate((form) => form.requestSubmit());
-  await waitForPartialProgress(receiver1);
+  await waitForPartialProgress(receiver1, MIN_DURABLE_PERCENT);
 
   const interruptedPercent = Number.parseInt(
     (await receiver1.locator('[data-progress-value]').textContent()) || '0',
     10,
   );
-  assert.ok(interruptedPercent > 0 && interruptedPercent < 95, `expected a real partial transfer, saw ${interruptedPercent}%`);
+  assert.ok(
+    interruptedPercent >= MIN_DURABLE_PERCENT && interruptedPercent < 95,
+    `expected a durable partial transfer at >=${MIN_DURABLE_PERCENT}%, saw ${interruptedPercent}%`,
+  );
   await receiver1.close();
 
   await waitForState(sender, 'ready');
