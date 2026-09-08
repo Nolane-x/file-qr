@@ -104,3 +104,14 @@ test('future release publication is draft-first and verifies before immutable pu
   assert.ok(verifyIndex > createIndex, 'draft bytes/attestations must be verified after draft creation');
   assert.ok(publishIndex > verifyIndex, 'draft must be published only after verification succeeds');
 });
+
+test('failed draft publication is recoverable without replacing an existing published release', () => {
+  assert.match(workflow, /gh release view "\$TAG"[\s\S]*--json isDraft/);
+  assert.match(workflow, /is_draft=/);
+  assert.match(
+    workflow,
+    /if \[ "\$is_draft" = ['"]true['"] \]; then[\s\S]*gh release delete "\$TAG"[\s\S]*--cleanup-tag[\s\S]*--yes/,
+  );
+  assert.match(workflow, /Removing stale draft release \$TAG before rebuilding it\./);
+  assert.match(workflow, /Published release \$TAG already exists; leaving it unchanged\./);
+});
