@@ -1,9 +1,14 @@
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
 export function classifyReleaseDraft(metadata, {
+  expectedTag,
   expectedRepository,
   expectedWorkflow,
 } = {}) {
+  if (metadata?.tagName !== expectedTag) {
+    return 'foreign-or-ambiguous-draft';
+  }
+
   if (metadata?.author?.login !== 'github-actions[bot]') {
     return 'foreign-or-ambiguous-draft';
   }
