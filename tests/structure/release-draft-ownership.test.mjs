@@ -43,3 +43,15 @@ test('foreign manual draft fails closed instead of being recoverable', async () 
 
   assert.equal(decision, 'foreign-or-ambiguous-draft');
 });
+
+test('bot-authored draft without the exact workflow ownership marker fails closed', async () => {
+  const decision = await classify({
+    isDraft: true,
+    tagName: tag,
+    author: { login: 'github-actions[bot]' },
+    targetCommitish: target,
+    body: '<!-- some-other-automation -->\n\nGenerated notes',
+  });
+
+  assert.equal(decision, 'foreign-or-ambiguous-draft');
+});
