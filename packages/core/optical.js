@@ -1,6 +1,7 @@
 import { crc32 } from './crc32.js';
 
 export const OPTICAL_VERSION = 'FQR1';
+export const MIN_OPTICAL_PAYLOAD_BYTES = 32;
 export const DEFAULT_OPTICAL_PAYLOAD_BYTES = 420;
 
 function toBase64Url(bytes) {
@@ -20,7 +21,7 @@ function fromBase64Url(text) {
 export function encodeOpticalFrames(input, options = {}) {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   const payloadBytes = options.payloadBytes ?? DEFAULT_OPTICAL_PAYLOAD_BYTES;
-  if (!Number.isInteger(payloadBytes) || payloadBytes < 32 || payloadBytes > 1024) throw new Error('Invalid optical payload size');
+  if (!Number.isInteger(payloadBytes) || payloadBytes < MIN_OPTICAL_PAYLOAD_BYTES || payloadBytes > 1024) throw new Error('Invalid optical payload size');
   const streamId = String(options.streamId ?? '').toUpperCase();
   if (!/^[A-Z0-9]{8}$/.test(streamId)) throw new Error('streamId must be 8 uppercase alphanumeric characters');
   const total = Math.max(1, Math.ceil(bytes.length / payloadBytes));
