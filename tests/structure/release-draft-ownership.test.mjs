@@ -69,3 +69,15 @@ test('ownership marker target must exactly match release targetCommitish', async
 
   assert.equal(decision, 'foreign-or-ambiguous-draft');
 });
+
+test('draft tag must exactly match the package-version tag being recovered', async () => {
+  const decision = await classify({
+    isDraft: true,
+    tagName: 'v9.9.9',
+    author: { login: 'github-actions[bot]' },
+    targetCommitish: target,
+    body: `${marker}\n\nGenerated notes`,
+  });
+
+  assert.equal(decision, 'foreign-or-ambiguous-draft');
+});
