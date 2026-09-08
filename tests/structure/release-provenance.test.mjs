@@ -15,7 +15,7 @@ test('future native releases require GitHub build attestations with release-only
   assert.match(workflow, /subject-path:\s*\|[\s\S]*SHA256SUMS\.txt/);
 });
 
-test('release publication includes a deterministic SHA-256 manifest and verifies downloaded bytes', () => {
+test('release publication includes a deterministic SHA-256 manifest and verifies draft bytes before publish', () => {
   const workflow = fs.readFileSync(workflowUrl, 'utf8');
 
   assert.match(workflow, /Check whether package-version release already exists/);
@@ -23,20 +23,25 @@ test('release publication includes a deterministic SHA-256 manifest and verifies
   assert.match(workflow, /sha256sum[\s\S]*FileQR-Windows-x64-setup\.exe/);
   assert.match(workflow, /sha256sum[\s\S]*FileQR-Android-arm64\.apk/);
   assert.match(workflow, /SHA256SUMS\.txt/);
-  assert.match(workflow, /gh release create[\s\S]*SHA256SUMS\.txt/);
-  assert.match(workflow, /Verify published release bytes and attestations/);
+  assert.match(workflow, /gh release create[\s\S]*SHA256SUMS\.txt[\s\S]*--draft/);
+  assert.match(workflow, /Verify draft release bytes and attestations/);
   assert.match(workflow, /gh release download/);
   assert.match(workflow, /sha256sum -c SHA256SUMS\.txt/);
   assert.match(workflow, /gh attestation verify FileQR-Windows-x64-setup\.exe[\s\S]*--repo "\$GITHUB_REPOSITORY"/);
   assert.match(workflow, /gh attestation verify FileQR-Android-arm64\.apk[\s\S]*--repo "\$GITHUB_REPOSITORY"/);
   assert.match(workflow, /gh attestation verify SHA256SUMS\.txt[\s\S]*--repo "\$GITHUB_REPOSITORY"/);
+  assert.match(workflow, /gh release edit "\$TAG" --draft=false/);
   assert.match(workflow, /steps\.release_state\.outputs\.exists\s*!=\s*'true'/);
 });
 
-test('existing immutable package releases are skipped before provenance publication', () => {
+test('published package releases are skipped while stale drafts are recoverable', () => {
   const workflow = fs.readFileSync(workflowUrl, 'utf8');
 
   assert.match(workflow, /gh release view/);
+  assert.match(workflow, /--json isDraft/);
+  assert.match(workflow, /is_draft=/);
+  assert.match(workflow, /Removing stale draft release \$TAG before rebuilding it\./);
+  assert.match(workflow, /gh release delete "\$TAG"[\s\S]*--cleanup-tag[\s\S]*--yes/);
   assert.match(workflow, /exists=true/);
   assert.match(workflow, /Release .* already exists; leaving it unchanged\./);
 });
