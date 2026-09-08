@@ -48,6 +48,22 @@ test('secret-bearing signer jobs never execute candidate repository code', () =>
   assert.match(android, /ANDROID_KEY_ALIAS/);
 });
 
+test('secret-bearing signer jobs use only GitHub-owned artifact actions', () => {
+  const windows = section('  sign_windows:', '  build_android:');
+  const android = section('  sign_android:', '  evidence:');
+  for (const signer of [windows, android]) {
+    const uses = [...signer.matchAll(/uses:\s*([^\n]+)/g)].map((match) => match[1].trim());
+    assert.ok(uses.length > 0, 'signer must use artifact transfer actions');
+    for (const action of uses) {
+      assert.match(
+        action,
+        /^actions\/(?:download-artifact|upload-artifact)@v\d+(?:\.\d+\.\d+)?$/,
+        `secret-bearing signer must not run non-GitHub setup action: ${action}`,
+      );
+    }
+  }
+});
+
 test('Windows signer proves publisher identity and cleanup', () => {
   const windows = section('  sign_windows:', '  build_android:');
   assert.match(windows, /1\.3\.6\.1\.5\.5\.7\.3\.3/);
