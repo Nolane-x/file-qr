@@ -666,8 +666,8 @@ function bindReceiverChannel(channel, socket, attemptId) {
 }
 
 async function receiveFile(rawCode) {
+  if (!isReceiveCode(rawCode)) { ui.status.textContent = 'That receive code is not valid.'; return; }
   const code = normalizeReceiveCode(rawCode);
-  if (!isReceiveCode(code)) { ui.status.textContent = 'That receive code is not valid.'; return; }
   if (!SIGNALING_ORIGIN) { setState('failed', 'This deployment has no signaling endpoint configured yet.'); return; }
 
   await cleanupLease({ discardPartial: false });
@@ -789,7 +789,9 @@ for (const eventName of ['dragleave', 'drop']) {
 }
 window.addEventListener('drop', (event) => { const [file] = event.dataTransfer?.files || []; if (file) sendFile(file).catch(() => {}); });
 ui.receiveForm.addEventListener('submit', (event) => { event.preventDefault(); receiveFile(ui.codeInput.value).catch(() => {}); });
-ui.codeInput.addEventListener('input', () => { ui.codeInput.value = normalizeReceiveCode(ui.codeInput.value); });
+ui.codeInput.addEventListener('input', () => {
+  if (isReceiveCode(ui.codeInput.value)) ui.codeInput.value = normalizeReceiveCode(ui.codeInput.value);
+});
 ui.pasteCode?.addEventListener('click', () => { pasteReceivePayload().catch(() => {}); });
 ui.scanQr?.addEventListener('click', () => { startScanner().catch(() => {}); });
 ui.scannerCancel?.addEventListener('click', () => { stopScanner(); ui.status.textContent = 'Camera scan cancelled. Enter a code or scan again.'; });
