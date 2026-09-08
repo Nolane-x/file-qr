@@ -108,7 +108,12 @@ export default {
 
     const match = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/connect$/);
     if (match && request.method === 'GET') {
-      const code = decodeURIComponent(match[1]);
+      let code;
+      try {
+        code = decodeURIComponent(match[1]);
+      } catch {
+        return json({ error: 'session-not-found' }, { status: 404 });
+      }
       if (!isReceiveCode(code)) return json({ error: 'session-not-found' }, { status: 404 });
       return roomStub(env, code).fetch(request);
     }
