@@ -93,3 +93,14 @@ test('release publication remains downstream of both platform signing jobs', () 
   assert.match(workflow, /release:[\s\S]*needs:\s*\[windows, android\]/);
   assert.match(workflow, /Release \$TAG already exists; leaving it unchanged\./);
 });
+
+test('future release publication is draft-first and verifies before immutable publish', () => {
+  const createIndex = workflow.indexOf('gh release create "$TAG"');
+  const verifyIndex = workflow.indexOf('Verify draft release bytes and attestations');
+  const publishIndex = workflow.indexOf('gh release edit "$TAG" --draft=false');
+
+  assert.ok(createIndex >= 0, 'release creation command must exist');
+  assert.match(workflow, /gh release create "\$TAG"[\s\S]{0,700}--draft/);
+  assert.ok(verifyIndex > createIndex, 'draft bytes/attestations must be verified after draft creation');
+  assert.ok(publishIndex > verifyIndex, 'draft must be published only after verification succeeds');
+});
