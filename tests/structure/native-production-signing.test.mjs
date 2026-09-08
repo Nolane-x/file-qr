@@ -94,6 +94,13 @@ test('release publication remains downstream of both platform signing jobs', () 
   assert.match(workflow, /Release \$TAG already exists; leaving it unchanged\./);
 });
 
+test('release publication is serialized so one run cannot delete another live draft', () => {
+  assert.match(
+    workflow,
+    /release:[\s\S]*?concurrency:\s*\n\s{6}group:\s*file-qr-native-release\s*\n\s{6}cancel-in-progress:\s*false/,
+  );
+});
+
 test('future release publication is draft-first and verifies before immutable publish', () => {
   const createIndex = workflow.indexOf('gh release create "$TAG"');
   const verifyIndex = workflow.indexOf('Verify draft release bytes and attestations');
