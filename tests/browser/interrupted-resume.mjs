@@ -25,6 +25,16 @@ async function waitForPartialProgress(page) {
   }, null, { timeout: 60_000 });
 }
 
+async function waitForResumedTransfer(page, timeout = 60_000) {
+  await page.waitForFunction(() => {
+    if (document.body?.dataset?.state !== 'receiving') return false;
+    const raw = document.querySelector('[data-progress-value]')?.textContent || '';
+    const percent = Number.parseInt(raw, 10);
+    const status = document.querySelector('[data-status]')?.textContent || '';
+    return Number.isFinite(percent) && percent > 0 && /Resuming/i.test(status);
+  }, null, { timeout });
+}
+
 function installSlowFileSlices(page) {
   return page.addInitScript(() => {
     const originalSlice = Blob.prototype.slice;
@@ -79,7 +89,7 @@ test('receiver interruption preserves partial bytes and resumes with the same le
   await receiver2.goto(WEB_ORIGIN, { waitUntil: 'domcontentloaded' });
   await receiver2.locator('[data-code-input]').fill(code);
   await receiver2.locator('[data-receive-form]').evaluate((form) => form.requestSubmit());
-  await waitForState(receiver2, 'receiving');
+  await waitForResumedTransfer(receiver2);
 
   const resumedPercent = Number.parseInt(
     (await receiver2.locator('[data-progress-value]').textContent()) || '0',
