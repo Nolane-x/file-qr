@@ -1,0 +1,65 @@
+name: Regenerate dependency security lock
+
+on:
+  push:
+    branches: [fix-undici-security-audit]
+    paths:
+      - '.github/workflows/regenerate-security-lock.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    if: github.repository == 'Nolane-x/file-qr' && github.actor == github.repository_owner && github.ref == 'refs/heads/fix-undici-security-audit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+
+      - name: Generate a fresh override-aware lock and prove the installed tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf node_modules
+          rm -f package-lock.json
+          npm install --package-lock-only --ignore-scripts
+          npm install --ignore-scripts
+          npm audit --audit-level=high
+          node <<'NODE'
+          const expected = { undici: '7.29.1', sharp: '0.35.4' };
+          for (const [name, version] of Object.entries(expected)) {
+            const actual = require(`./node_modules/${name}/package.json`).version;
+            if (actual !== version) {
+              throw new Error(`${name} resolved ${actual}, expected ${version}`);
+            }
+            console.log(`${name}@${actual}: PASS`);
+          }
+          NODE
+
+      - name: Commit only the generated lock and self-delete
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add package-lock.json
+          git rm .github/workflows/regenerate-security-lock.yml
+          mapfile -t changed < <(git diff --cached --name-only | LC_ALL=C sort)
+          expected=(
+            '.github/workflows/regenerate-security-lock.yml'
+            'package-lock.json'
+          )
+          mapfile -t expected < <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)
+          test "${#changed[@]}" -eq "${#expected[@]}"
+          for index in "${!expected[@]}"; do
+            test "${changed[$index]}" = "${expected[$index]}"
+          done
+          git config user.name 'Nolane-x'
+          git config user.email 'casioreview20@gmail.com'
+          git commit -m 'chore(security): regenerate lock with patched overrides'
+          git push origin HEAD:fix-undici-security-audit
