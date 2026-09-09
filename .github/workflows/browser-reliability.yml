@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: 24
       - name: Install project dependencies
-        run: npm install
+        run: npm ci
       - name: Install browser harness
         run: |
           npm install --no-save --package-lock=false playwright@1.63.0
