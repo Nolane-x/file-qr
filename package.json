@@ -17,5 +17,8 @@
     "verify": "npm test && npm run build:web && npm run build:native-ui && npm run check:signaling && npm run check:web-deploy",
     "nui:setup": "node scripts/setup-nui.mjs"
   },
+  "overrides": {
+    "undici": "7.29.1"
+  },
   "engines": { "node": ">=22" }
 }
