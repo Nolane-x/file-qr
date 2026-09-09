@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const signaling = fs.readFileSync(new URL('../../services/signaling/src/index.js', import.meta.url), 'utf8');
+const resourceRoutes = fs.readFileSync(new URL('../../services/signaling/src/resource-routes.js', import.meta.url), 'utf8');
+const rateImplementation = `${signaling}\n${resourceRoutes}`;
 const wrangler = JSON.parse(fs.readFileSync(new URL('../../services/signaling/wrangler.jsonc', import.meta.url), 'utf8'));
 
 function routeSlice(startMarker, endMarker) {
@@ -54,9 +56,9 @@ test('TURN credential minting rate-limits only after live-lease authorization an
 });
 
 test('rate-limit denial is explicit and limiter unavailability fails closed', () => {
-  assert.match(signaling, /rate-limited/);
-  assert.match(signaling, /status:\s*429/);
-  assert.match(signaling, /retry-after/);
-  assert.match(signaling, /rate-limit-unavailable/);
-  assert.match(signaling, /status:\s*503/);
+  assert.match(rateImplementation, /rate-limited/);
+  assert.match(rateImplementation, /status:\s*429/);
+  assert.match(rateImplementation, /retry-after/);
+  assert.match(rateImplementation, /rate-limit-unavailable/);
+  assert.match(rateImplementation, /status:\s*503/);
 });
