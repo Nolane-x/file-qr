@@ -112,9 +112,9 @@ jobs:
           }
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: 24.20.0
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-      - run: npm install
+      - run: npm ci
       - name: Build unsigned Windows NSIS candidate
         run: npx tauri build --bundles nsis
         working-directory: apps/native
@@ -280,14 +280,14 @@ jobs:
           fi
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: 24.20.0
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
       - name: Install Android build tools
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
-      - run: npm install
+      - run: npm ci
       - name: Initialize Android project
         run: npm run android:init
         working-directory: apps/native
