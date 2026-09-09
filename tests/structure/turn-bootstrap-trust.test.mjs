@@ -22,7 +22,7 @@ test('production TURN bootstrap runs only from trusted main events and refuses P
     workflow,
     /\n\s{2}bootstrap:\s*\n\s{4}if:\s*github\.ref\s*==\s*['"]refs\/heads\/main['"]\s*&&\s*github\.actor\s*==\s*github\.repository_owner/,
   );
-  assert.match(workflow, /actions\/checkout@v6[\s\S]*ref:\s*main/);
+  assert.match(workflow, /actions\/checkout@[0-9a-f]{40}\b[^\n]*[\s\S]*ref:\s*main/);
 });
 
 test('trusted TURN bootstrap keeps Calls creation and Worker secret-write credentials separate', () => {

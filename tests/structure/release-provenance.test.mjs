@@ -9,7 +9,7 @@ test('future native releases require GitHub build attestations with release-only
 
   assert.match(workflow, /permissions:\s*\n\s{2}contents:\s*read\s*\n\s*jobs:/);
   assert.match(workflow, /\n\s{2}release:[\s\S]*?\n\s{4}permissions:\s*\n\s{6}contents:\s*write\s*\n\s{6}id-token:\s*write\s*\n\s{6}attestations:\s*write\s*\n\s{6}artifact-metadata:\s*write/);
-  assert.match(workflow, /actions\/attest@v4\.2\.2/);
+  assert.match(workflow, /actions\/attest@[0-9a-f]{40}\b/);
   assert.match(workflow, /subject-path:\s*\|[\s\S]*FileQR-Windows-x64-setup\.exe/);
   assert.match(workflow, /subject-path:\s*\|[\s\S]*FileQR-Android-arm64\.apk/);
   assert.match(workflow, /subject-path:\s*\|[\s\S]*SHA256SUMS\.txt/);

@@ -24,7 +24,7 @@ test('publisher proof is manual and main-only', () => {
 
 test('publisher proof binds candidates to trusted main and the audited signing-release scope', () => {
   const validate = section('  validate:', '  build_windows:');
-  assert.match(validate, /actions\/checkout@v6/);
+  assert.match(validate, /actions\/checkout@[0-9a-f]{40}\b/);
   assert.match(validate, /github\.sha/);
   assert.match(validate, /fetch-depth:\s*0/);
   assert.match(validate, /git fetch[^\n]*CANDIDATE_SHA/);
@@ -50,7 +50,7 @@ test('publisher proof binds candidates to trusted main and the audited signing-r
 test('candidate build jobs are secretless and bind exact checkout SHA', () => {
   const builds = section('  build_windows:', '  sign_windows:') + section('  build_android:', '  sign_android:');
   assert.doesNotMatch(builds, /secrets\./);
-  assert.match(builds, /actions\/checkout@v6/);
+  assert.match(builds, /actions\/checkout@[0-9a-f]{40}\b/);
   assert.match(builds, /inputs\.candidate_sha|needs\.validate\.outputs\.candidate_sha/);
   assert.match(builds, /git rev-parse HEAD/);
   assert.match(builds, /candidate SHA mismatch/i);
@@ -77,12 +77,13 @@ test('secret-bearing signer jobs use only GitHub-owned artifact actions', () => 
   const windows = section('  sign_windows:', '  build_android:');
   const android = section('  sign_android:', '  evidence:');
   for (const signer of [windows, android]) {
-    const uses = [...signer.matchAll(/uses:\s*([^\n]+)/g)].map((match) => match[1].trim());
+    const uses = [...signer.matchAll(/uses:\s*([^\n]+)/g)]
+      .map((match) => match[1].trim().replace(/\s+#.*$/, ''));
     assert.ok(uses.length > 0, 'signer must use artifact transfer actions');
     for (const action of uses) {
       assert.match(
         action,
-        /^actions\/(?:download-artifact|upload-artifact)@v\d+(?:\.\d+\.\d+)?$/,
+        /^actions\/(?:download-artifact|upload-artifact)@[0-9a-f]{40}$/,
         `secret-bearing signer must not run non-GitHub setup action: ${action}`,
       );
     }
@@ -121,6 +122,6 @@ test('sanitized evidence binds exact candidate and artifact identities', () => {
   assert.match(evidence, /signerThumbprint/);
   assert.match(evidence, /certificateSha256/);
   assert.match(evidence, /observedAt/);
-  assert.match(evidence, /actions\/upload-artifact@v4/);
+  assert.match(evidence, /actions\/upload-artifact@[0-9a-f]{40}\b/);
   assert.doesNotMatch(evidence, /WINDOWS_CERTIFICATE_PASSWORD|ANDROID_KEY_PASSWORD|ANDROID_KEY_BASE64/);
 });
