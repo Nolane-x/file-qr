@@ -37,7 +37,7 @@ jobs:
           node-version: 24
 
       - name: Install project dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install relay probe browser
         run: |
