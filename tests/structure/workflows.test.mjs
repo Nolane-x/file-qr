@@ -14,6 +14,14 @@ test('web deployment uses Cloudflare Workers static assets with production smoke
   assert.ok(!yml.includes('actions/deploy-pages@v5'));
 });
 
+test('manual web production deploy refuses non-main refs before secret-bearing steps', () => {
+  const yml = read('../../.github/workflows/pages.yml');
+  const guard = "if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'";
+  assert.ok(yml.includes('workflow_dispatch:'));
+  assert.ok(yml.includes(guard), 'manual production web deploy must fail closed outside main');
+  assert.ok(yml.indexOf(guard) < yml.indexOf('CLOUDFLARE_API_TOKEN'), 'main-ref guard must run before Cloudflare credentials are exposed');
+});
+
 test('GitHub Pages mirror keeps repo base isolated from Cloudflare root build', () => {
   const workflowUrl = new URL('../../.github/workflows/github-pages.yml', import.meta.url);
   assert.ok(fs.existsSync(workflowUrl), 'GitHub Pages mirror workflow should exist');
