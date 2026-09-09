@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { compactReceiveCode, createReceiveCode, isReceiveCode, SESSION_TTL_MS } from '../../../packages/core/session.js';
+import { handleSessionAllocation, handleTurnCredentials } from './resource-routes.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -8,7 +9,6 @@ const JSON_HEADERS = {
   'access-control-allow-headers': 'content-type',
   'access-control-allow-methods': 'GET,POST,OPTIONS',
 };
-const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
 
 function json(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -40,31 +40,6 @@ function turnCredentialTtlSeconds(env) {
   return Math.min(172800, Math.max(300, Math.floor(configured)));
 }
 
-async function hashedRateLimitKey(scope, value) {
-  const encoded = new TextEncoder().encode(`${scope}:${String(value || 'unknown')}`);
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
-  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function enforceRateLimit(binding, key) {
-  if (!binding || typeof binding.limit !== 'function') {
-    return json({ error: 'rate-limit-unavailable' }, { status: 503 });
-  }
-  try {
-    const result = await binding.limit({ key });
-    if (result?.success === true) return null;
-    if (result?.success === false) {
-      return json(
-        { error: 'rate-limited' },
-        { status: 429, headers: { 'retry-after': String(RATE_LIMIT_RETRY_AFTER_SECONDS) } },
-      );
-    }
-  } catch {
-    return json({ error: 'rate-limit-unavailable' }, { status: 503 });
-  }
-  return json({ error: 'rate-limit-unavailable' }, { status: 503 });
-}
-
 async function generateTurnCredentials(env) {
   const ttl = turnCredentialTtlSeconds(env);
   const response = await fetch(
@@ -94,53 +69,32 @@ export default {
     }
 
     if (url.pathname === '/v1/turn-credentials' && request.method === 'POST') {
-      if (!turnConfigured(env)) return json({ error: 'turn-not-configured' }, { status: 404 });
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return json({ error: 'invalid-request' }, { status: 400 });
-      }
-      const code = body?.code;
-      if (!isReceiveCode(code)) return json({ error: 'session-not-found' }, { status: 404 });
-
-      const authorization = await roomStub(env, code).fetch('https://room.internal/turn-authorize', { method: 'POST' });
-      if (!authorization.ok) {
-        return json({ error: 'session-expired' }, { status: authorization.status === 410 ? 410 : 404 });
-      }
-
-      // SHA-256 keeps the short-lived capability opaque inside the rate-limit counter key.
-      const turnRateKey = await hashedRateLimitKey('turn', compactReceiveCode(code));
-      const turnRateLimited = await enforceRateLimit(env.TURN_CREDENTIAL_RATE_LIMIT, turnRateKey);
-      if (turnRateLimited) return turnRateLimited;
-
-      const credentials = await generateTurnCredentials(env);
-      if (!credentials) return json({ error: 'turn-provider-unavailable' }, { status: 502 });
-      return json(credentials);
+      return handleTurnCredentials(request, env, {
+        jsonImpl: json,
+        turnConfiguredImpl: () => turnConfigured(env),
+        authorizeTurnImpl: (code) => roomStub(env, code).fetch('https://room.internal/turn-authorize', { method: 'POST' }),
+        // SHA-256 in the route module keeps the live capability opaque inside the limiter key.
+        compactCodeImpl: (code) => compactReceiveCode(code),
+        rateLimitBinding: env.TURN_CREDENTIAL_RATE_LIMIT,
+        generateTurnCredentialsImpl: () => generateTurnCredentials(env),
+      });
     }
 
     if (url.pathname === '/v1/sessions' && request.method === 'POST') {
       const actor = request.headers.get('cf-connecting-ip') || 'unknown';
-      // SHA-256 avoids using the raw network identifier as the rate-limit counter key.
-      const sessionRateKey = await hashedRateLimitKey('session', actor);
-      const sessionRateLimited = await enforceRateLimit(env.SESSION_ALLOCATION_RATE_LIMIT, sessionRateKey);
-      if (sessionRateLimited) return sessionRateLimited;
-
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const code = createReceiveCode();
-        const senderToken = randomToken();
-        const createdAt = Date.now();
-        const expiresAt = createdAt + Number(env.SESSION_TTL_MS || SESSION_TTL_MS);
-        const response = await roomStub(env, code).fetch('https://room.internal/init', {
+      // SHA-256 in the route module avoids using the raw network identifier as the limiter key.
+      return handleSessionAllocation(request, env, {
+        jsonImpl: json,
+        actor,
+        rateLimitBinding: env.SESSION_ALLOCATION_RATE_LIMIT,
+        createReceiveCodeImpl: () => createReceiveCode(),
+        randomTokenImpl: () => randomToken(),
+        initRoomImpl: (code, session) => roomStub(env, code).fetch('https://room.internal/init', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ code, senderToken, createdAt, expiresAt }),
-        });
-        if (response.status === 201) {
-          return json({ code, senderToken, expiresAt }, { status: 201 });
-        }
-      }
-      return json({ error: 'session-allocation-failed' }, { status: 503 });
+          body: JSON.stringify(session),
+        }),
+      });
     }
 
     const match = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/connect$/);
