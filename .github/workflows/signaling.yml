@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 24
 
-      - run: npm install
+      - run: npm ci
       - run: npm run check:signaling
 
       - name: Validate Cloudflare credentials

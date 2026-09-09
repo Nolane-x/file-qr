@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 24
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-      - run: npm install
+      - run: npm ci
       - run: npx tauri build --bundles nsis
         working-directory: apps/native
         env:
@@ -48,7 +48,7 @@ jobs:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
       - name: Install Android NDK
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
-      - run: npm install
+      - run: npm ci
       - name: Initialize Android project with camera permission
         run: npm run android:init
         working-directory: apps/native
