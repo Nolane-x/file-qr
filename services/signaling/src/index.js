@@ -8,6 +8,7 @@ const JSON_HEADERS = {
   'access-control-allow-headers': 'content-type',
   'access-control-allow-methods': 'GET,POST,OPTIONS',
 };
+const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
 
 function json(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -37,6 +38,31 @@ function turnCredentialTtlSeconds(env) {
   const configured = Number(env.TURN_CREDENTIAL_TTL_SECONDS || 3600);
   if (!Number.isFinite(configured)) return 3600;
   return Math.min(172800, Math.max(300, Math.floor(configured)));
+}
+
+async function hashedRateLimitKey(scope, value) {
+  const encoded = new TextEncoder().encode(`${scope}:${String(value || 'unknown')}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function enforceRateLimit(binding, key) {
+  if (!binding || typeof binding.limit !== 'function') {
+    return json({ error: 'rate-limit-unavailable' }, { status: 503 });
+  }
+  try {
+    const result = await binding.limit({ key });
+    if (result?.success === true) return null;
+    if (result?.success === false) {
+      return json(
+        { error: 'rate-limited' },
+        { status: 429, headers: { 'retry-after': String(RATE_LIMIT_RETRY_AFTER_SECONDS) } },
+      );
+    }
+  } catch {
+    return json({ error: 'rate-limit-unavailable' }, { status: 503 });
+  }
+  return json({ error: 'rate-limit-unavailable' }, { status: 503 });
 }
 
 async function generateTurnCredentials(env) {
@@ -83,12 +109,23 @@ export default {
         return json({ error: 'session-expired' }, { status: authorization.status === 410 ? 410 : 404 });
       }
 
+      // SHA-256 keeps the short-lived capability opaque inside the rate-limit counter key.
+      const turnRateKey = await hashedRateLimitKey('turn', compactReceiveCode(code));
+      const turnRateLimited = await enforceRateLimit(env.TURN_CREDENTIAL_RATE_LIMIT, turnRateKey);
+      if (turnRateLimited) return turnRateLimited;
+
       const credentials = await generateTurnCredentials(env);
       if (!credentials) return json({ error: 'turn-provider-unavailable' }, { status: 502 });
       return json(credentials);
     }
 
     if (url.pathname === '/v1/sessions' && request.method === 'POST') {
+      const actor = request.headers.get('cf-connecting-ip') || 'unknown';
+      // SHA-256 avoids using the raw network identifier as the rate-limit counter key.
+      const sessionRateKey = await hashedRateLimitKey('session', actor);
+      const sessionRateLimited = await enforceRateLimit(env.SESSION_ALLOCATION_RATE_LIMIT, sessionRateKey);
+      if (sessionRateLimited) return sessionRateLimited;
+
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const code = createReceiveCode();
         const senderToken = randomToken();
