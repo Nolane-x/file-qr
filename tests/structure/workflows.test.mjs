@@ -29,9 +29,9 @@ test('GitHub Pages mirror keeps repo base isolated from Cloudflare root build', 
   const vite = read('../../apps/web/vite.config.js');
   const cloudflare = read('../../.github/workflows/pages.yml');
   assert.ok(yml.includes('pull_request:'));
-  assert.ok(yml.includes('actions/configure-pages@v6'));
-  assert.ok(yml.includes('actions/upload-pages-artifact@v5'));
-  assert.ok(yml.includes('actions/deploy-pages@v5'));
+  assert.match(yml, /actions\/configure-pages@[0-9a-f]{40}\b/);
+  assert.match(yml, /actions\/upload-pages-artifact@[0-9a-f]{40}\b/);
+  assert.match(yml, /actions\/deploy-pages@[0-9a-f]{40}\b/);
   assert.ok(yml.includes('pages: write'));
   assert.ok(yml.includes('id-token: write'));
   assert.ok(yml.includes('VITE_BASE: /file-qr/'));
@@ -76,7 +76,7 @@ test('native workflow publishes one release per package version from main', () =
   assert.ok(yml.includes('gh release view "$TAG"'));
   assert.ok(yml.includes('gh release create "$TAG"'));
   assert.ok(yml.includes('--target "$GITHUB_SHA"'));
-  assert.ok(yml.includes('actions/download-artifact@v5'));
+  assert.match(yml, /actions\/download-artifact@[0-9a-f]{40}\b/);
 });
 
 test('CI dry-runs the Cloudflare web deployment configuration', () => {
