@@ -23,7 +23,7 @@ test('production TURN evidence workflow runs after deploy and around trusted evi
   assert.match(workflow, /github\.event\.workflow_run\.conclusion\s*==\s*['"]success['"]/);
   assert.match(workflow, /playwright@1\.63\.0/);
   assert.match(workflow, /production-turn-relay\.mjs/);
-  assert.match(workflow, /upload-artifact@v4/);
+  assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}\b/);
   assert.match(workflow, /turn-relay-evidence\.json/);
 });
 
