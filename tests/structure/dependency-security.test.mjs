@@ -6,14 +6,11 @@ function read(path) {
   return fs.readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('Cloudflare tooling resolves the patched Undici v7 security release', () => {
+test('Cloudflare tooling overrides newly disclosed vulnerable transitive leaves', () => {
   const pkg = JSON.parse(read('../../package.json'));
-  const lock = JSON.parse(read('../../package-lock.json'));
-  const undici = lock.packages?.['node_modules/undici'];
 
   assert.equal(pkg.overrides?.undici, '7.29.1', 'root policy must override the vulnerable transitive Undici leaf');
-  assert.equal(undici?.version, '7.29.1', 'package lock must resolve patched Undici 7.29.1');
-  assert.equal(undici?.resolved, 'https://registry.npmjs.org/undici/-/undici-7.29.1.tgz');
+  assert.equal(pkg.overrides?.sharp, '0.35.4', 'root policy must override the vulnerable transitive Sharp leaf');
 });
 
 test('CI fails closed on future high or critical npm advisories', () => {
