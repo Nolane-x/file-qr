@@ -11,6 +11,18 @@
   "exports": {
     "SessionRoom": { "type": "durable-object", "storage": "sqlite" }
   },
+  "ratelimits": [
+    {
+      "name": "SESSION_ALLOCATION_RATE_LIMIT",
+      "namespace_id": "47046001",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "TURN_CREDENTIAL_RATE_LIMIT",
+      "namespace_id": "47046002",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "vars": {
     "SESSION_TTL_MS": "600000",
     "TURN_CREDENTIAL_TTL_SECONDS": "3600"
