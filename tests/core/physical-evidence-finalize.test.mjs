@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,13 +8,14 @@ import { prepareCeremony } from '../../scripts/prepare-optical-physical-evidence
 import { finalizeCeremony } from '../../scripts/finalize-optical-physical-evidence.mjs';
 
 const SHA = 'a'.repeat(40);
-const H1 = '1'.repeat(64);
-const H2 = '2'.repeat(64);
+const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const WIN_ARCHIVE_SHA = sha(Buffer.from('finalizer-win-artifact'));
+const ANDROID_ARCHIVE_SHA = sha(Buffer.from('finalizer-android-artifact'));
 
 function execGh(endpoint) {
   if (endpoint.endsWith('/artifacts')) return JSON.stringify({ artifacts: [
-    { id: 10, name: 'file-qr-windows', digest: `sha256:${H1}`, expired: false, workflow_run: { id: 123, head_sha: SHA } },
-    { id: 11, name: 'file-qr-android', digest: `sha256:${H2}`, expired: false, workflow_run: { id: 123, head_sha: SHA } },
+    { id: 10, name: 'file-qr-windows', digest: `sha256:${WIN_ARCHIVE_SHA}`, expired: false, workflow_run: { id: 123, head_sha: SHA } },
+    { id: 11, name: 'file-qr-android', digest: `sha256:${ANDROID_ARCHIVE_SHA}`, expired: false, workflow_run: { id: 123, head_sha: SHA } },
   ] });
   return JSON.stringify({
     id: 123, name: 'Native Builds', event: 'push', head_branch: 'main', head_sha: SHA,
@@ -21,16 +23,22 @@ function execGh(endpoint) {
   });
 }
 
+function artifactFetcher({ platform, destinationDir }) {
+  fs.mkdirSync(destinationDir, { recursive: false, mode: 0o700 });
+  if (platform === 'windows') {
+    fs.writeFileSync(path.join(destinationDir, 'FileQR-Windows-x64-setup.exe'), Buffer.from('win'), { mode: 0o600 });
+    return { archiveSha256: WIN_ARCHIVE_SHA };
+  }
+  fs.writeFileSync(path.join(destinationDir, 'FileQR-Android-arm64.apk'), Buffer.from('android'), { mode: 0o600 });
+  return { archiveSha256: ANDROID_ARCHIVE_SHA };
+}
+
 async function workspace() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fileqr-finalize-'));
-  const windows = path.join(root, 'win.bin');
-  const android = path.join(root, 'android.bin');
-  fs.writeFileSync(windows, 'win');
-  fs.writeFileSync(android, 'android');
   const dir = path.join(root, 'ceremony');
   await prepareCeremony({
-    scenario: 'fqr2-windows-to-android', runId: 123, windowsBinaryPath: windows,
-    androidBinaryPath: android, payloadBytes: 4096, workspace: dir, execGh, controlSha: SHA,
+    scenario: 'fqr2-windows-to-android', runId: 123,
+    payloadBytes: 4096, workspace: dir, execGh, controlSha: SHA, artifactFetcher,
     now: () => new Date('2026-09-10T12:00:00.000Z'),
   });
   const received = path.join(root, 'received.bin');
