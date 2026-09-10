@@ -68,6 +68,45 @@ function protocolForScenario(scenario) {
   fail('FQR_EVIDENCE_SCENARIO', 'unsupported ceremony scenario');
 }
 
+const COMMON_PHYSICAL_INSTRUCTIONS = Object.freeze([
+  'Use a real display-to-camera optical path; do not use a virtual camera, prerecorded media, or a synthetic decode path.',
+  'Use only the generated payload.bin and preserve the final received bytes unchanged for independent hashing.',
+  'Do not capture or retain camera imagery as ceremony evidence.',
+]);
+
+export function physicalInstructionsForScenario(scenario) {
+  let specific;
+  switch (scenario) {
+    case 'fqr2-windows-to-android':
+      specific = 'Show the FQR2 stream on the Windows display and receive it with a physical Android camera.';
+      break;
+    case 'fqr2-android-to-windows':
+      specific = 'Show the FQR2 stream on the physical Android display and receive it with a real Windows camera.';
+      break;
+    case 'fqr1-windows-to-android':
+      specific = 'Run the FQR1 compatibility path from the Windows display to a physical Android camera receiver.';
+      break;
+    case 'fqr1-android-to-windows':
+      specific = 'Run the FQR1 compatibility path from the physical Android display to a real Windows camera receiver.';
+      break;
+    case 'fqr2-mid-cycle':
+      specific = 'Start the receiver only after the broadcast is already in progress, then complete from the ongoing FQR2 stream.';
+      break;
+    case 'fqr2-repair-phase':
+      specific = 'Begin during the FQR2 repair phase, intentionally miss frames, and require repair information rather than a perfect systematic pass.';
+      break;
+    case 'fqr2-large-file':
+      specific = 'Use a generated FQR2 payload greater than 8 MiB so the persistent-storage path is exercised.';
+      break;
+    case 'fqr2-interruption-resume':
+      specific = 'Interrupt only after durable progress exists, restart or reopen as required, and verify that durable progress is actually resumed.';
+      break;
+    default:
+      fail('FQR_EVIDENCE_SCENARIO', 'unsupported ceremony scenario');
+  }
+  return [specific, ...COMMON_PHYSICAL_INSTRUCTIONS];
+}
+
 export async function prepareCeremony({
   scenario,
   runId,
@@ -154,6 +193,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       workspace: a.workspace,
     });
     console.log(`Prepared physical ceremony ${result.ceremonyId}`);
+    for (const instruction of physicalInstructionsForScenario(result.scenario)) {
+      console.log(`- ${instruction}`);
+    }
   } catch (error) {
     console.error(error?.message || String(error));
     process.exitCode = 1;
