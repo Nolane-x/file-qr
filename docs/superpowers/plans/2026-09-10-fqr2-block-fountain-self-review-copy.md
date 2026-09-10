@@ -1,0 +1,1 @@
+Implementation branch isolation marker. Authoritative self-review is `docs/superpowers/plans/2026-09-10-fqr2-block-fountain-self-review.md` on parent head `e3de4478c9d06aa0299d6746be035de282a2743e`.
