@@ -110,11 +110,18 @@ async function createBrowserOpfsAdapter() {
   return {
     kind: 'opfs',
     async readMeta(key) {
+      let handle;
       try {
-        const handle = await getFileHandle(key, false);
-        return JSON.parse(await (await handle.getFile()).text());
+        handle = await getFileHandle(key, false);
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return null;
+        throw error;
+      }
+      const text = await (await handle.getFile()).text();
+      try {
+        return JSON.parse(text);
       } catch {
-        return null;
+        throw new Error('Invalid FQR2 persisted sidecar JSON');
       }
     },
     async writeMeta(key, value) {
