@@ -118,16 +118,36 @@ export function createFqr2Receiver(options = {}) {
   let finalizedFile = null;
   let stopped = false;
 
+  async function finalizeIfReady() {
+    if (!manifest || !store || finalizedFile || store.completedBlocks !== manifest.blockCount) return finalizedFile;
+    finalizedFile = await store.finalize();
+    return finalizedFile;
+  }
+
+  function manifestResult(accepted, duplicate) {
+    return {
+      accepted,
+      duplicate,
+      manifest,
+      complete: finalizedFile !== null,
+      completedBlocks: store?.completedBlocks ?? 0,
+      blockCount: manifest?.blockCount ?? 0,
+      file: finalizedFile,
+    };
+  }
+
   async function acceptManifest(frame) {
     const parsed = decodeFqr2Manifest(frame);
     if (manifest) {
       if (!sameManifest(manifest, parsed)) throw new Error('FQR2 manifest conflict');
-      return { accepted: false, duplicate: true, manifest };
+      await finalizeIfReady();
+      return manifestResult(false, true);
     }
     const nextStore = await openStore(parsed);
     manifest = parsed;
     store = nextStore;
-    return { accepted: true, duplicate: false, manifest };
+    await finalizeIfReady();
+    return manifestResult(true, false);
   }
 
   async function acceptPart(frame) {
@@ -179,7 +199,7 @@ export function createFqr2Receiver(options = {}) {
     activeBlockSha256 = null;
     decoder = null;
 
-    if (store.completedBlocks === manifest.blockCount) finalizedFile = await store.finalize();
+    await finalizeIfReady();
     return {
       accepted: true,
       duplicate: false,
