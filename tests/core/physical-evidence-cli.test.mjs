@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { prepareCeremony } from '../../scripts/prepare-optical-physical-evidence.mjs';
+import {
+  physicalInstructionsForScenario,
+  prepareCeremony,
+} from '../../scripts/prepare-optical-physical-evidence.mjs';
 
 const SHA = 'a'.repeat(40);
 const H1 = '1'.repeat(64);
@@ -80,4 +83,18 @@ test('FQR1 preparation keeps compatibility geometry and evidence budget', async 
     now: () => new Date('2026-09-10T12:00:00.000Z'),
   });
   assert.deepEqual(p.protocol, { version: 'FQR1', blockBytes: null, symbolBytes: null });
+});
+
+test('physical ceremony instructions are scenario-specific and preserve claim boundaries', () => {
+  const baseline = physicalInstructionsForScenario('fqr2-windows-to-android').join('\n');
+  assert.match(baseline, /Windows display/i);
+  assert.match(baseline, /physical Android/i);
+  assert.match(baseline, /virtual camera/i);
+
+  assert.match(physicalInstructionsForScenario('fqr2-mid-cycle').join('\n'), /after the broadcast is already in progress/i);
+  assert.match(physicalInstructionsForScenario('fqr2-repair-phase').join('\n'), /repair/i);
+  assert.match(physicalInstructionsForScenario('fqr2-large-file').join('\n'), /greater than 8 MiB/i);
+  assert.match(physicalInstructionsForScenario('fqr2-interruption-resume').join('\n'), /durable progress/i);
+  assert.match(physicalInstructionsForScenario('fqr1-android-to-windows').join('\n'), /FQR1/i);
+  assert.throws(() => physicalInstructionsForScenario('unknown'), /FQR_EVIDENCE_SCENARIO/);
 });
