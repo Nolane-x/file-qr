@@ -29,6 +29,18 @@ function sameIndexes(left, right) {
   return true;
 }
 
+function cloneSolved(solved) {
+  return new Map([...solved].map(([index, payload]) => [index, payload.slice()]));
+}
+
+function cloneEquations(equations) {
+  return equations.map(equation => ({
+    indexes: [...equation.indexes],
+    payload: equation.payload.slice(),
+    ordinal: equation.ordinal,
+  }));
+}
+
 export class Fqr2BlockDecoder {
   #blockLength;
   #symbolBytes;
@@ -74,42 +86,46 @@ export class Fqr2BlockDecoder {
     while (this.#recent.size > maxRecent) this.#recent.delete(this.#recent.keys().next().value);
   }
 
-  #addSolved(index, payload, queue) {
-    const existing = this.#solved.get(index);
-    if (existing) {
-      if (!bytesEqual(existing, payload)) throw new Error('Inconsistent FQR2 fountain equation');
-      return false;
-    }
-    this.#solved.set(index, payload.slice());
-    queue.push(index);
-    return true;
-  }
-
   #cascadeSolved(initialIndex, initialPayload) {
+    const solved = cloneSolved(this.#solved);
+    const equations = cloneEquations(this.#equations);
     const queue = [];
-    this.#addSolved(initialIndex, initialPayload, queue);
 
+    const addSolved = (index, payload) => {
+      const existing = solved.get(index);
+      if (existing) {
+        if (!bytesEqual(existing, payload)) throw new Error('Inconsistent FQR2 fountain equation');
+        return;
+      }
+      solved.set(index, payload.slice());
+      queue.push(index);
+    };
+
+    addSolved(initialIndex, initialPayload);
     while (queue.length) {
       const solvedIndex = queue.shift();
-      const solvedPayload = this.#solved.get(solvedIndex);
-      for (let position = this.#equations.length - 1; position >= 0; position--) {
-        const equation = this.#equations[position];
+      const solvedPayload = solved.get(solvedIndex);
+      for (let position = equations.length - 1; position >= 0; position--) {
+        const equation = equations[position];
         const found = equation.indexes.indexOf(solvedIndex);
         if (found === -1) continue;
         xorInto(equation.payload, solvedPayload);
         equation.indexes.splice(found, 1);
 
         if (equation.indexes.length === 0) {
-          this.#equations.splice(position, 1);
+          equations.splice(position, 1);
           if (!isZero(equation.payload)) throw new Error('Inconsistent FQR2 fountain equation');
           continue;
         }
         if (equation.indexes.length === 1) {
-          this.#equations.splice(position, 1);
-          this.#addSolved(equation.indexes[0], equation.payload, queue);
+          equations.splice(position, 1);
+          addSolved(equation.indexes[0], equation.payload);
         }
       }
     }
+
+    this.#solved = solved;
+    this.#equations = equations;
   }
 
   #retainEquation(indexes, payload) {
@@ -183,21 +199,16 @@ export class Fqr2BlockDecoder {
       else reducedIndexes.push(index);
     }
 
-    try {
-      if (reducedIndexes.length === 0) {
-        if (!isZero(reducedPayload)) throw new Error('Inconsistent FQR2 fountain equation');
-      } else if (reducedIndexes.length === 1) {
-        this.#cascadeSolved(reducedIndexes[0], reducedPayload);
-      } else {
-        this.#retainEquation(reducedIndexes, reducedPayload);
-      }
-      this.#rememberSequence(seqNum);
-      await this.#verifyIfComplete();
-    } catch (error) {
-      if (/Inconsistent FQR2 fountain equation/.test(String(error?.message))) this.reset();
-      throw error;
+    if (reducedIndexes.length === 0) {
+      if (!isZero(reducedPayload)) throw new Error('Inconsistent FQR2 fountain equation');
+    } else if (reducedIndexes.length === 1) {
+      this.#cascadeSolved(reducedIndexes[0], reducedPayload);
+    } else {
+      this.#retainEquation(reducedIndexes, reducedPayload);
     }
 
+    this.#rememberSequence(seqNum);
+    await this.#verifyIfComplete();
     return { accepted: true, duplicate: false, solved: this.solvedCount, complete: this.complete };
   }
 
