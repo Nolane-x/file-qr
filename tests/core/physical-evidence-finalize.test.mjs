@@ -15,7 +15,10 @@ function execGh(endpoint) {
     { id: 10, name: 'file-qr-windows', digest: `sha256:${H1}`, expired: false, workflow_run: { id: 123, head_sha: SHA } },
     { id: 11, name: 'file-qr-android', digest: `sha256:${H2}`, expired: false, workflow_run: { id: 123, head_sha: SHA } },
   ] });
-  return JSON.stringify({ id: 123, name: 'Native Builds', event: 'push', head_branch: 'main', head_sha: SHA, repository: { full_name: 'Nolane-x/file-qr' } });
+  return JSON.stringify({
+    id: 123, name: 'Native Builds', event: 'push', head_branch: 'main', head_sha: SHA,
+    status: 'completed', conclusion: 'success', repository: { full_name: 'Nolane-x/file-qr' },
+  });
 }
 
 async function workspace() {
