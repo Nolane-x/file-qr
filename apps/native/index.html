@@ -68,12 +68,16 @@
       <div class="optical-copy">
         <div class="eyebrow"><span class="pulse-dot"></span><span>Air-gap transfer</span></div>
         <h1>QR Stream.</h1>
-        <p class="lede">No router. No internet. The screen becomes the link. V0.1 uses repeated CRC-checked QR frames and automatically fills missed frames on the next loop.</p>
+        <p class="lede">No router. No internet. Send with the compatible v0.1 stream or the experimental v0.2 block-fountain stream. The receiver recognizes both formats automatically.</p>
+        <div class="mode-switch" aria-label="QR Stream sender version">
+          <button type="button" data-optical-version="fqr1" aria-pressed="true">v0.1 <em>Compatible</em></button>
+          <button type="button" data-optical-version="fqr2" aria-pressed="false">v0.2 <em>Experimental</em></button>
+        </div>
         <div class="optical-actions">
           <label class="optical-action"><input data-optical-file type="file" hidden /><span>Send offline</span><strong>Choose file</strong><b>→</b></label>
           <button class="optical-action" data-camera><span>Receive offline</span><strong>Open camera</strong><b>◎</b></button>
         </div>
-        <p class="optical-note">Experimental baseline. For large files, Network mode is dramatically faster; the optical protocol is intentionally versioned for future FEC and denser visual modulation.</p>
+        <p class="optical-note">v0.1 keeps the existing 8 MB compatibility path. v0.2 is experimental, uses bounded 64 KiB blocks with deterministic repair frames, and currently accepts files up to 64 MB. Large v0.2 receives require persistent device storage.</p>
       </div>
       <div class="optical-visual">
         <div class="optical-qr" data-optical-qr><div class="optical-placeholder">FILE<br/>QR</div></div>
