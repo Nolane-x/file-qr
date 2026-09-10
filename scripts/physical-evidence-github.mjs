@@ -65,9 +65,11 @@ export function resolveNativeBuild({ runId, execGh = defaultExecGh } = {}) {
     run?.name !== WORKFLOW ||
     run?.event !== 'push' ||
     run?.head_branch !== 'main' ||
+    run?.status !== 'completed' ||
+    run?.conclusion !== 'success' ||
     !SHA40.test(run?.head_sha || '')
   ) {
-    fail('FQR_EVIDENCE_GITHUB_AUTHORITY', 'run is not an authoritative main Native Builds push');
+    fail('FQR_EVIDENCE_GITHUB_AUTHORITY', 'run is not a successful completed authoritative main Native Builds push');
   }
 
   if (!Array.isArray(listing?.artifacts)) fail('FQR_EVIDENCE_GITHUB_ARTIFACT', 'artifact listing is malformed');
