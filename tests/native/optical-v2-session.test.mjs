@@ -122,6 +122,41 @@ test('receiver retries store opening after a transient manifest admission failur
   assert.equal(receiver.manifest.streamId, '0123456789AB');
 });
 
+test('receiver retries finalization from durable complete state on a repeated manifest', async () => {
+  let finalizeAttempts = 0;
+  const store = {
+    completedBlocks: 0,
+    hasBlock: index => index === 0 && store.completedBlocks === 1,
+    async writeVerifiedBlock() { this.completedBlocks = 1; },
+    async finalize() {
+      finalizeAttempts += 1;
+      if (finalizeAttempts === 1) throw new Error('finalize temporarily unavailable');
+      return new File([Uint8Array.from([1,2,3,4])], 'x.bin');
+    },
+    async abort() {}, async cleanup() {},
+  };
+  const receiver = createFqr2Receiver({ openStore: async () => store });
+  const manifestFrame = encodeFqr2Manifest({
+    streamId: '0123456789AB', fileSize: 4, symbolBytes: 768,
+    name: 'x.bin', type: 'application/octet-stream',
+  });
+  await receiver.accept(manifestFrame);
+  const part = encodeFqr2Part({
+    streamId: '0123456789AB', blockIndex: 0, seqNum: 1, seqLen: 1,
+    blockLength: 4,
+    blockSha256: '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a',
+    payload: Uint8Array.from([1,2,3,4, ...new Array(764).fill(0)]),
+  });
+  await assert.rejects(() => receiver.accept(part), /finalize temporarily unavailable/);
+  assert.equal(receiver.completedBlocks, 1, 'verified durable block progress must survive finalization failure');
+  assert.equal(receiver.complete, false);
+  const retry = await receiver.accept(manifestFrame);
+  assert.equal(finalizeAttempts, 2);
+  assert.equal(retry.complete, true);
+  assert.equal(retry.file.name, 'x.bin');
+  assert.equal(receiver.complete, true);
+});
+
 test('receiver durable progress advances only after verified block storage resolves', async () => {
   let resolveWrite;
   let signalWriteStarted;
