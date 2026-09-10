@@ -20,7 +20,7 @@ function execGh(endpoint) {
   }
   return JSON.stringify({
     id: 123, name: 'Native Builds', event: 'push', head_branch: 'main', head_sha: SHA,
-    repository: { full_name: 'Nolane-x/file-qr' },
+    status: 'completed', conclusion: 'success', repository: { full_name: 'Nolane-x/file-qr' },
   });
 }
 
