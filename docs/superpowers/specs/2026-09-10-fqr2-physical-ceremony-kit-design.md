@@ -11,7 +11,7 @@ This specification defines a trusted, privacy-preserving physical evidence kit f
 
 The kit exists to answer a narrow question that hosted tests cannot answer:
 
-> Did an exact File QR build transfer exact file bytes through a real display-to-camera path on physical Windows/Android hardware under a recorded ceremony, and did the received bytes equal the source bytes?
+> Did one exact integrated File QR build transfer exact file bytes through a real display-to-camera path on physical Windows/Android hardware under a recorded ceremony, and did the received bytes equal the source bytes?
 
 The kit is evidence machinery. It is not a new transfer protocol, not a benchmark framework, not a release signer, and not a substitute for repository governance.
 
@@ -28,243 +28,290 @@ At design time:
 
 The kit must not weaken these boundaries merely to obtain faster evidence.
 
-## 3. Goals
+## 3. Selected architecture
 
-The first version must:
+The selected design is a **Trusted Physical Ceremony Kit**, not an automated pre-merge hardware runner.
 
-1. bind each ceremony to exact trusted control code and exact tested application binaries;
-2. generate or admit only privacy-safe test payloads and record their SHA-256 before transfer;
-3. record physical transfer direction and platform/device class without storing serial numbers or camera imagery;
-4. distinguish machine-verifiable evidence from human physical observations;
-5. require received-file SHA-256 equality before a transfer can pass;
-6. support the Issue #50 matrix: Windows -> Android, Android -> Windows, FQR1 compatibility, FQR2 mid-cycle join, FQR2 repair-phase receive, >8 MiB persistent-storage receive, and interruption/resume;
-7. fail closed on malformed, incomplete, contradictory, stale, or wrong-build evidence;
-8. produce deterministic sanitized JSON suitable for attachment to an issue or long-term archival;
-9. reuse the existing Android physical-device collector where it provides real value rather than duplicating emulator rejection and device sanitization;
-10. keep FQR1/FQR2 application behavior unchanged.
+Version 1 uses trusted-main control code, exact artifact and payload hashing, small platform collectors, explicit human physical observations, a fail-closed pure validator, and a deterministic matrix-summary validator.
 
-## 4. Non-goals
+The physical ceremony itself is local/manual. Hosted CI validates the evidence machinery but never pretends to be a physical optical test.
+
+## 4. Goals
+
+Version 1 must:
+
+1. bind every authoritative ceremony to exact trusted control code and one exact integrated `Native Builds` run on `main`;
+2. bind both Windows and Android artifacts from that same run and commit;
+3. independently hash the actual Windows and Android binaries used by the operator;
+4. generate only privacy-safe test payloads and record source SHA-256 before transfer;
+5. record physical transfer direction and sanitized platform/device class without camera imagery or raw device identifiers;
+6. distinguish machine-verifiable evidence from human physical observations;
+7. require independently computed received-file SHA-256 equality before a transfer can pass;
+8. cover the Issue #50 matrix: Windows -> Android, Android -> Windows, FQR1 compatibility, FQR2 mid-cycle join, repair-phase receive, >8 MiB persistent-storage receive, and interruption/resume;
+9. fail closed on malformed, incomplete, contradictory, stale, or wrong-build evidence;
+10. produce deterministic sanitized JSON suitable for issue attachment or archival;
+11. validate the complete set of ceremony records so #50 closure is not a manual “looks complete” judgment;
+12. reuse the existing Android physical-device collector where useful;
+13. keep FQR1/FQR2 application behavior unchanged.
+
+## 5. Non-goals
 
 Version 1 does not:
 
 - make FQR2 the default sender mode;
 - raise the 64 MiB FQR2 admission cap;
-- add a new QR/FEC schedule;
-- add transfer telemetry to the production protocol;
-- claim universal camera compatibility, range, or throughput;
+- change the QR/FEC schedule;
+- add test-only telemetry to the transfer protocol;
+- claim universal camera compatibility, distance, or throughput;
 - sign binaries or replace PR #9 publisher proof;
-- configure branch protection or repository rulesets;
+- configure branch protection or rulesets;
 - capture screenshots, camera frames, screen recordings, audio, serial numbers, Wi-Fi identifiers, or personal files;
-- run pull-request code on self-hosted physical runners;
-- treat synthetic QR decoding, a virtual camera, emulator, or prerecorded video as physical evidence;
-- silently infer a human physical observation that the tooling cannot machine-prove.
+- run pull-request code on repository self-hosted physical runners;
+- treat synthetic QR decoding, a virtual camera, emulator, prerecorded video, or screenshots as physical evidence;
+- infer a physical fact that the tooling cannot machine-prove;
+- make release assets an authoritative #50 source in v1;
+- prove GitHub branch protection from inside an offline JSON validator.
 
-## 5. Trust model
+## 6. Trust model
 
-### 5.1 Trusted control code
+### 6.1 Trusted control code
 
-The ceremony controller, validator, schema, and helper scripts must come from trusted `main` after repository trust Issue #15 is closed.
+The ceremony controller, validator, schema, and helper scripts become authoritative only after they exist on trusted `main` after Issue #15 is closed.
 
-Physical evidence is not authoritative when the control scripts themselves come from an unmerged PR checkout.
+Evidence produced by control scripts from an unmerged PR checkout is useful for development only and cannot close #50.
 
-### 5.2 Tested application build
+### 6.2 Tested build is a subject, not an authority
 
-The tested File QR binary is a subject of the ceremony, not an authority for declaring its own PASS.
+The File QR applications under test never declare their own authoritative PASS.
 
-The controller records and independently hashes the binary before installation/execution.
+The controller independently hashes the binaries before installation/execution. Final received bytes are independently hashed by the finalizer.
 
-For v1 authoritative closure, tested binaries must be traceable to an exact protected-main commit or an exact release produced from protected main. A PR artifact may be used for informal debugging outside the authoritative ceremony, but it cannot close Issue #50.
+### 6.3 Authoritative build source
 
-This avoids executing untrusted pull-request code on repository self-hosted infrastructure merely to obtain pre-merge evidence.
+For v1, an authoritative #50 ceremony accepts only a GitHub Actions **Native Builds** run satisfying all of:
 
-### 5.3 Repository governance ordering
+- repository is exactly `Nolane-x/file-qr`;
+- workflow is the repository's trusted Native Builds workflow;
+- run head branch is `main`;
+- run event is a trusted main integration event, not `pull_request`;
+- run head SHA is recorded as the ceremony build commit;
+- the Windows and Android artifacts both belong to that same run;
+- their GitHub artifact IDs/names/digests are recorded;
+- local extracted binaries are independently SHA-256 hashed before use.
 
-The intended ordering is:
+PR artifacts may be used for informal debugging on operator-controlled hardware, but the validator marks that evidence non-authoritative and it cannot satisfy #50 closure.
 
-1. close #15 and enforce protected `main`;
+### 6.4 Repository governance is an external prerequisite
+
+The kit does **not** claim it can cryptographically prove branch protection from an offline evidence file.
+
+Issue #15 remains a separate repository-administration prerequisite. The intended closure ordering is:
+
+1. protect `main` and close #15;
 2. integrate the generic ceremony kit through protected main;
 3. integrate FQR2 as experimental through protected main after its hosted gates remain green;
-4. obtain exact integrated native artifacts;
-5. run physical ceremonies against those exact artifacts;
-6. validate and record evidence for #50;
-7. only then consider any separately designed default/promotion decision.
+4. obtain the exact integrated Native Builds run;
+5. run physical ceremonies against its exact artifacts;
+6. validate and record the #50 evidence set;
+7. only then consider a separately designed default/promotion decision.
 
-The kit may be implemented and hosted-tested in a PR before #15 closes, but it must not be represented as trusted physical evidence until integrated through the protected boundary.
+The pure validator proves record consistency and main-build provenance. Repository governance evidence proves whether that main boundary was protected. Neither substitutes for the other.
 
-### 5.4 No self-attestation
+### 6.5 No self-hosted PR execution shortcut
 
-The File QR application under test may expose normal UI state such as cycle/block progress, but no application-produced `PASS` field is trusted.
+The repository's existing Android physical workflow is deliberately manual-only, main-only, self-hosted, and checks out trusted main.
 
-PASS is computed by a separate validator from recorded evidence and independently hashed files/artifacts.
+The FQR2 ceremony kit must not add a workflow that checks out PR #49 or executes arbitrary PR code on that existing self-hosted runner merely to obtain pre-merge evidence.
 
-## 6. Evidence strength model
+A future disposable, secretless, dedicated hardware lab is a separate architecture problem.
 
-Every evidence field is classified as one of:
+## 7. Evidence strength model
 
-### 6.1 Machine-verified
+Every recorded fact belongs to one of three classes.
 
-Examples:
-
-- control-code commit SHA;
-- tested binary SHA-256;
-- source payload SHA-256 and byte length;
-- received payload SHA-256 and byte length;
-- exact hash equality;
-- Android emulator rejection and sanitized physical-device properties;
-- artifact/run/release identity when resolved from GitHub metadata;
-- required schema fields and cross-field consistency;
-- whether file size exceeds the 8 MiB FQR2 memory-fallback threshold;
-- timestamps and deterministic ceremony identifiers.
-
-### 6.2 Human-observed physical facts
-
-Some physical facts cannot be safely machine-proved without adding intrusive video capture or production instrumentation. They are recorded explicitly as operator observations, never silently promoted to machine proof.
+### 7.1 Machine-verified facts
 
 Examples:
 
-- the sender display was physically visible to the receiver camera;
-- no virtual camera or prerecorded video was used;
-- the receiver scan was started after the sender UI had advanced to the requested cycle;
-- frames were intentionally obscured/missed during a repair ceremony;
-- a physical interruption was performed at the requested checkpoint;
+- trusted control commit SHA;
+- Native Builds run ID, head branch, event, and head SHA resolved from GitHub metadata;
+- Windows/Android artifact IDs, names, and GitHub digests;
+- independently computed local binary SHA-256 values;
+- source payload size and SHA-256;
+- received payload size and SHA-256;
+- exact source/received equality;
+- Android emulator rejection and sanitized physical-device facts;
+- scenario/schema consistency;
+- timestamps and deterministic ceremony identifier;
+- whether payload size is above the FQR2 8 MiB fallback threshold.
+
+### 7.2 Human-observed physical facts
+
+Facts that cannot be safely machine-proved without intrusive capture or protocol instrumentation remain explicit operator observations:
+
+- sender display was physically visible to receiver camera;
+- no virtual camera or prerecorded media was used;
+- receiver scanning began after broadcast had already started;
+- sender UI had advanced to a later cycle before a repair-phase receive began;
+- frames were intentionally obscured or missed;
+- a physical interruption/restart was performed;
+- resumed progress was observed;
 - Windows receiver used the intended physical webcam.
 
-Each such fact is stored under `operatorObservations`, not under machine assertions.
+These fields live only under `operatorObservations` and are never relabeled as machine proof.
 
-### 6.3 Derived validator assertions
+### 7.3 Derived validator assertions
 
 The validator derives claims such as:
 
+- `buildBindingComplete`;
 - `exactBytesMatch`;
-- `largeFilePersistentPathRequired`;
+- `privacyContractComplete`;
 - `midCycleJoinClaimComplete`;
 - `repairPhaseClaimComplete`;
+- `largeFileClaimComplete`;
 - `resumeClaimComplete`;
-- `artifactBindingComplete`;
-- `privacyContractComplete`;
-- final `result: PASS | FAIL`.
+- per-record `result: PASS | FAIL`;
+- evidence-set `matrixComplete`.
 
-The operator does not directly edit derived assertions.
+The operator cannot directly set derived PASS assertions.
 
-## 7. Ceremony architecture
+## 8. Component architecture
 
-Version 1 uses four small components.
+Version 1 has five small components.
 
-### 7.1 Pure evidence model/validator
+### 8.1 Pure evidence model and validator
 
 A pure Node module owns:
 
-- schema constants;
-- canonical field validation;
-- SHA/identifier format validation;
-- matrix-specific requirements;
-- cross-field consistency rules;
+- exact schemas and allowed keys;
+- canonical normalization;
+- SHA/digest/identifier validation;
+- scenario-specific requirements;
+- cross-field consistency;
+- privacy rules;
 - PASS/FAIL derivation;
-- privacy checks;
-- deterministic normalization for stored JSON.
+- evidence-set matrix validation.
 
-It performs no camera access and no UI automation.
+It performs no camera access, UI automation, network mutation, or GitHub write.
 
-### 7.2 Preparation CLI
+### 8.2 Build-binding resolver
 
-A trusted-main CLI creates a ceremony workspace and manifest.
+Preparation resolves the exact Native Builds run and artifact metadata through read-only GitHub metadata.
+
+For authoritative mode it refuses:
+
+- PR-only runs;
+- non-main head branches;
+- wrong repository/workflow;
+- missing Windows or Android artifact;
+- artifact metadata that cannot be bound to the chosen run.
+
+If required GitHub metadata cannot be resolved, authoritative preparation fails. There is no operator checkbox that bypasses build provenance.
+
+### 8.3 Preparation CLI
+
+A trusted-main CLI creates one ceremony workspace and immutable preparation manifest.
 
 Inputs include:
 
-- ceremony scenario;
-- tested build identity;
-- tested binary path(s);
-- optional GitHub run/release metadata;
+- scenario;
+- Native Builds run ID;
+- local Windows artifact/binary path;
+- local Android artifact/binary path;
 - requested payload size.
 
-The CLI:
+The preparation CLI:
 
-1. hashes tested binaries;
-2. creates a privacy-safe deterministic-or-random test payload according to scenario;
-3. records source SHA-256 and size;
-4. writes a ceremony manifest with no PASS result;
-5. prints human instructions specific to the scenario.
+1. resolves the main-run metadata;
+2. verifies both artifact identities belong to the run;
+3. independently hashes both local tested binaries;
+4. creates a privacy-safe generated payload;
+5. records source SHA-256 and byte length;
+6. derives a deterministic ceremony ID;
+7. writes an immutable preparation manifest without a PASS result;
+8. prints scenario-specific physical instructions.
 
-The payload must contain no personal/user data. Default payloads are generated bytes with a small non-sensitive header identifying only the ceremony schema/version.
+### 8.4 Platform collectors
 
-### 7.3 Platform collectors
+Android v1 reuses/refactors the current collector primitives for:
 
-Platform collectors record facts that can be independently obtained from the host/device.
-
-Android v1 reuses/refactors the existing `collect-android-physical-evidence.mjs` capabilities for:
-
-- exactly one authorized physical ADB device;
+- exactly one authorized ADB device;
 - emulator rejection;
 - package identity/version;
 - CAMERA permission;
 - sanitized device class;
-- no camera imagery capture.
+- optional camera-service ownership check where the scenario uses Android as receiver;
+- explicit `cameraImageryCaptured: false`.
 
-The FQR2 ceremony does not require the Android collector to capture frames.
+Windows v1 records only non-sensitive platform facts and, where stable APIs permit, physical camera-device presence. It does not capture camera frames. The stronger claim that the actual transfer used a physical webcam remains an operator observation plus exact output equality.
 
-Windows v1 records only non-sensitive platform/build facts needed by the ceremony. It must not attempt hidden webcam image capture. Where a physical-webcam fact cannot be established machine-only without invasive instrumentation, it remains an operator observation.
+### 8.5 Finalization and matrix-summary CLI
 
-### 7.4 Finalization CLI
+Per ceremony, finalization:
 
-After the physical transfer, the operator supplies the received file path and records the required physical observations.
-
-The finalizer:
-
-1. hashes the received file independently;
-2. records byte length;
-3. imports sanitized platform collector facts;
+1. loads the immutable preparation manifest;
+2. independently hashes the received file;
+3. imports sanitized collector facts;
 4. records structured operator observations;
 5. invokes the pure validator;
-6. writes final sanitized evidence JSON;
-7. exits non-zero on FAIL;
-8. never deletes the source or received file unless the operator explicitly requests cleanup after evidence is written.
+6. writes final evidence JSON only from normalized data;
+7. exits non-zero on FAIL.
 
-## 8. Repository layout
+A separate summary mode consumes multiple accepted evidence records and computes whether the mandatory #50 matrix is complete for one integrated build lineage.
 
-The implementation plan may adjust exact names, but the intended boundaries are:
+The summary cannot convert a failed record into PASS and cannot combine incompatible build SHAs into one silent success.
 
-- `packages/core/physical-evidence.js` — pure schema/normalization/validation logic;
-- `scripts/prepare-optical-physical-evidence.mjs` — preparation CLI;
-- `scripts/finalize-optical-physical-evidence.mjs` — finalization CLI;
+## 9. Repository layout
+
+Exact filenames may be refined by the implementation plan, but intended boundaries are:
+
+- `packages/core/physical-evidence.js` — pure schema/normalization/per-record + matrix validation;
+- `scripts/prepare-optical-physical-evidence.mjs` — run/artifact binding + payload preparation;
+- `scripts/finalize-optical-physical-evidence.mjs` — received-file hashing + final validation;
+- `scripts/summarize-optical-physical-evidence.mjs` — #50 matrix aggregation;
 - `scripts/collect-android-physical-evidence.mjs` — reuse/refactor only where necessary;
-- optional `scripts/collect-windows-physical-evidence.mjs` — sanitized Windows host facts only;
-- `tests/core/physical-evidence.test.mjs` — validator behavior;
-- `tests/structure/physical-evidence-kit.test.mjs` — trust/privacy/scope guards;
-- `docs/physical-evidence/FQR2-CEREMONY.md` — operator ceremony instructions added only with implementation.
+- optional `scripts/collect-windows-physical-evidence.mjs` — sanitized Windows facts only;
+- `tests/core/physical-evidence.test.mjs`;
+- `tests/structure/physical-evidence-kit.test.mjs`;
+- `docs/physical-evidence/FQR2-CEREMONY.md` — operator instructions added with implementation.
 
-The design does not require a new self-hosted workflow in v1.
-
-## 9. Why v1 is local/manual instead of a new physical GitHub workflow
-
-The repository's existing Android physical workflow is deliberately manual-only, main-only, and self-hosted. Its structural tests explicitly reject pull-request and push triggers and require checkout of trusted main.
-
-A new workflow that checks out PR #49 or executes arbitrary PR artifacts on the same physical runner would weaken that trust model.
-
-Therefore v1 keeps physical execution local/manual and keeps the control scripts from trusted main. GitHub-hosted CI verifies the evidence machinery itself; it does not pretend to be a physical ceremony.
-
-A future dedicated, disposable, secretless hardware lab may automate more steps under a separately reviewed threat model. That is outside this spec.
+Version 1 does not require a new self-hosted workflow.
 
 ## 10. Evidence schema v1
 
-The final evidence object has this conceptual shape:
+A final record conceptually has this shape:
 
 ```json
 {
   "schemaVersion": 1,
-  "ceremonyId": "...",
+  "ceremonyId": "<deterministic-id>",
   "scenario": "fqr2-windows-to-android",
   "control": {
     "repository": "Nolane-x/file-qr",
-    "trustedMainSha": "<40-hex>"
+    "commitSha": "<40-hex>"
   },
   "build": {
+    "repository": "Nolane-x/file-qr",
+    "workflow": "Native Builds",
+    "workflowRunId": 123456,
+    "event": "push",
+    "headBranch": "main",
     "commitSha": "<40-hex>",
-    "source": "actions-main | release-main",
-    "workflowRunId": null,
-    "releaseTag": null,
-    "artifactName": "...",
-    "artifactDigest": "sha256:<64-hex>",
-    "binarySha256": "<64-hex>"
+    "artifacts": {
+      "windows": {
+        "artifactId": 1,
+        "name": "file-qr-windows",
+        "artifactDigest": "sha256:<64-hex>",
+        "binarySha256": "<64-hex>"
+      },
+      "android": {
+        "artifactId": 2,
+        "name": "file-qr-android",
+        "artifactDigest": "sha256:<64-hex>",
+        "binarySha256": "<64-hex>"
+      }
+    }
   },
   "payload": {
     "generated": true,
@@ -279,12 +326,12 @@ The final evidence object has this conceptual shape:
     "symbolBytes": 768
   },
   "sender": {
-    "platform": "windows | android",
+    "platform": "windows",
     "osClass": "...",
     "deviceClass": "..."
   },
   "receiver": {
-    "platform": "windows | android",
+    "platform": "android",
     "osClass": "...",
     "deviceClass": "..."
   },
@@ -298,9 +345,9 @@ The final evidence object has this conceptual shape:
     "resumeObserved": false
   },
   "measurements": {
-    "startedAt": "...",
-    "completedAt": "...",
-    "wallClockMs": 0,
+    "startedAt": "2026-09-10T00:00:00.000Z",
+    "completedAt": "2026-09-10T00:01:00.000Z",
+    "wallClockMs": 60000,
     "observedCycles": null
   },
   "privacy": {
@@ -309,7 +356,7 @@ The final evidence object has this conceptual shape:
     "rawDeviceSerialStored": false
   },
   "assertions": {
-    "artifactBindingComplete": true,
+    "buildBindingComplete": true,
     "exactBytesMatch": true,
     "privacyContractComplete": true
   },
@@ -317,347 +364,399 @@ The final evidence object has this conceptual shape:
 }
 ```
 
-This is conceptual, not permission to accept arbitrary additional fields. The implementation validator defines an exact allowed-key schema and rejects unknown security-relevant fields rather than ignoring them.
+This is conceptual. Implementation defines an exact allowed-key schema and rejects unknown security-relevant fields instead of ignoring them.
 
-## 11. Ceremony identifier
+## 11. Immutable preparation manifest
 
-`ceremonyId` is an identifier, not a secret or authentication token.
-
-It is derived from stable non-secret inputs sufficient to avoid accidental evidence mixups, for example a truncated SHA-256 over:
+Preparation writes the authority-bearing immutable subset before any physical transfer:
 
 - schema version;
-- trusted control SHA;
-- tested build SHA;
 - scenario;
-- source payload SHA;
-- ceremony start timestamp.
+- control repository/SHA;
+- build run metadata;
+- both artifact identities/digests/binary hashes;
+- source payload size/hash;
+- protocol geometry;
+- ceremony ID;
+- start timestamp.
 
-The full derivation must be deterministic and specified in implementation tests.
+Finalization may add only:
 
-## 12. Build/artifact binding
+- receiver/sender sanitized platform observations;
+- operator observations;
+- received-file size/hash;
+- completion timestamp/measurements;
+- derived assertions/result.
 
-A ceremony cannot pass unless:
+Finalization must reject attempts to alter authority-bearing preparation fields.
 
-- `build.commitSha` is valid 40-hex;
-- the tested binary exists and has an independently computed SHA-256;
-- any supplied GitHub artifact digest is syntactically valid;
-- run/release metadata and source type are internally consistent;
-- the control SHA and build SHA are recorded separately;
-- an authoritative ceremony uses a protected-main build lineage, not a PR-only build lineage.
+## 12. Ceremony identifier
 
-If the binary came from a GitHub Actions artifact ZIP, the archive/artifact digest and the extracted binary SHA-256 are both useful and must not be conflated.
+`ceremonyId` is an identifier, not authentication.
 
-## 13. Payload rules
+Its derivation is deterministic from canonical non-secret preparation inputs, including:
 
-### 13.1 Generated payloads
+- schema version;
+- control commit SHA;
+- build commit SHA;
+- Native Builds run ID;
+- scenario;
+- Windows binary SHA-256;
+- Android binary SHA-256;
+- source payload SHA-256;
+- preparation start timestamp.
 
-Default ceremonies generate a privacy-safe payload.
+Implementation tests must lock a known vector so host endianness or field-order changes cannot silently change identifiers.
 
-The generator records:
+## 13. Build and artifact binding
 
-- exact byte size;
-- source SHA-256;
-- generator/schema version.
+An authoritative record cannot pass unless:
 
-Payload bytes need not be reproducible from public metadata. There is no requirement to use a predictable PRNG.
+- run metadata resolves to `Nolane-x/file-qr`;
+- workflow identity is Native Builds;
+- `headBranch === "main"`;
+- event is the allowed trusted-main integration event;
+- `build.commitSha` exactly equals run head SHA;
+- Windows and Android artifact IDs both belong to that run;
+- expected artifact names match;
+- artifact digests are valid and match resolved metadata;
+- local tested binaries exist and are independently hashed;
+- both binaries are bound into the immutable preparation manifest.
 
-### 13.2 Personal files
+The GitHub artifact digest and the extracted binary SHA-256 are distinct facts and must not be conflated.
 
-Authoritative v1 evidence refuses a manifest marked as using personal payload data.
+Branch-protection state is not encoded as a fake assertion here; #15 must be independently closed before these records are accepted as repository-authoritative closure evidence.
 
-This keeps evidence archives safe and makes deletion/retention simpler.
+## 14. Payload rules
 
-### 13.3 Received bytes
+### 14.1 Generated payloads only
 
-The received file is never trusted merely because the File QR UI says complete.
+Authoritative v1 ceremonies generate privacy-safe payloads. Arbitrary personal files are not accepted for closure evidence.
 
-The finalizer independently computes:
+The generator records exact byte size, source SHA-256, and generator/schema version.
 
-- byte length;
-- SHA-256.
+Payload bytes need not be reproducible from public metadata and no predictable PRNG is required.
+
+### 14.2 Received bytes
+
+The File QR UI “complete” state is insufficient.
+
+Finalization independently computes:
+
+- received byte length;
+- received SHA-256.
 
 Exact length and SHA-256 equality are mandatory for PASS.
 
-## 14. Required scenario matrix
+No source/received file bytes are stored in evidence JSON.
 
-Each scenario is an independent ceremony record. One giant JSON file does not collapse unrelated tests into an ambiguous PASS.
+## 15. Required scenario matrix
 
-### 14.1 FQR2 Windows sender -> Android camera receiver
+Each scenario creates an independent final record. Matrix completion is computed over records, not typed manually.
+
+### 15.1 FQR2 Windows sender -> Android camera receiver
 
 Requires:
 
 - FQR2;
-- Windows sender;
-- physical Android receiver;
+- Windows sender and Android receiver direction;
 - Android physical-device collector success;
-- physical display-to-camera observation;
+- physical display-to-camera operator observation;
+- no virtual camera/prerecorded-media observation;
 - exact received-byte equality.
 
-### 14.2 FQR2 Android sender -> Windows webcam receiver
+### 15.2 FQR2 Android sender -> Windows webcam receiver
 
 Requires:
 
 - FQR2;
-- Android sender;
-- Windows receiver;
-- physical webcam observation;
+- Android sender and Windows receiver direction;
+- physical webcam operator observation;
+- no virtual camera/prerecorded-media observation;
 - exact received-byte equality.
 
-### 14.3 FQR1 compatibility
+### 15.3 FQR1 compatibility
 
-At least one physical receive ceremony per receiver platform class must retain FQR1 compatibility evidence.
+At least one physical receive ceremony for each receiver platform class must retain FQR1 evidence.
 
-FQR1 evidence is not used to infer FQR2 behavior.
+FQR1 evidence is never used to infer FQR2 behavior.
 
-### 14.4 FQR2 mid-cycle join
+### 15.4 FQR2 mid-cycle join
 
-Requires an operator-recorded observation that the receiver began scanning only after broadcast was already active and not at initial frame zero, plus exact-byte completion.
+Requires an explicit operator observation that receiver scanning began after broadcast was already active and not at initial frame zero, plus exact-byte completion.
 
-If cycle position cannot be observed reliably, the record cannot assert a stronger cycle number than was actually observed.
+If exact cycle number was not reliably observed, the record must not invent one.
 
-### 14.5 FQR2 repair-phase ceremony
+### 15.5 FQR2 repair-phase receive
 
-The simplest v1 ceremony uses a single-block payload small enough to keep the sender's block identity stable while waiting for the first systematic cycle to finish.
+The v1 ceremony uses a single-block payload (`<= 65536` bytes) so the block identity stays fixed while the sender advances beyond the initial systematic cycle.
 
-The operator begins receiver scanning only after the sender UI reports a later cycle. The record stores that as an operator observation.
+The operator begins receiver scanning only after the sender UI visibly reports a later cycle. Successful exact-byte completion then records a physical receive during repair-phase broadcast rather than relying only on the initial systematic cycle.
 
-A successful exact-byte transfer then demonstrates physical decode during repair-phase broadcast rather than relying solely on the initial systematic cycle.
+This is explicitly **not** cryptographic proof of which individual fountain equation solved the block. The evidence language must remain at the level actually observed.
 
-This is still a physical/operator observation, not cryptographic proof of which individual fountain equation solved the block. The evidence language must remain that precise.
-
-### 14.6 FQR2 >8 MiB persistent-storage ceremony
+### 15.6 FQR2 >8 MiB persistent-storage receive
 
 Requires:
 
 - FQR2;
 - payload strictly greater than 8 MiB;
-- exact-byte completion;
-- a receiver environment where FQR2 persistent random-access storage is available.
+- receiver platform capable of the implementation's persistent random-access storage path;
+- exact-byte completion.
 
-Because the implementation refuses >8 MiB memory fallback, successful exact-byte completion is consistent with the persistent-storage path. The evidence must not claim direct internal OPFS tracing unless separately instrumented.
+Because the integrated FQR2 implementation refuses >8 MiB whole-file memory fallback, successful exact-byte completion is evidence consistent with the persistent path. The ceremony must not claim direct OPFS internals unless future instrumentation proves them.
 
-### 14.7 FQR2 interruption/resume ceremony
+### 15.7 FQR2 interruption/resume
 
 Requires:
 
-- an intentional interruption after at least one durable block is visible to the operator;
-- restart/resume without replacing the source payload;
-- completion with exact received SHA-256;
-- explicit operator observation of interruption and resumed progress.
+- intentional interruption after at least one durable block is visible to the operator;
+- same source payload after restart;
+- explicit interruption and resumed-progress observations;
+- exact received SHA-256 after completion.
 
-The ceremony must not claim which internal sidecar writes occurred unless machine instrumentation proves it.
+The record does not claim internal sidecar write ordering from observation alone; that ordering remains covered by code tests.
 
-## 15. Timing and performance evidence
+## 16. Matrix-summary rules
+
+The summary validator consumes final PASS records and verifies:
+
+- all mandatory scenario categories are represented;
+- records use the same build commit and Native Builds run unless an explicitly documented compatible integrated-head transition is supplied and separately approved;
+- Windows/Android artifact hashes are consistent across records using the same run;
+- no required record is informational/non-authoritative;
+- no failed record is counted toward coverage;
+- FQR1 compatibility exists for both receiver platform classes;
+- FQR2 directionality exists both ways;
+- mid-cycle, repair-phase, >8 MiB, and interruption/resume evidence are each present;
+- privacy requirements pass for every included record.
+
+The output is a deterministic summary with `matrixComplete: true | false` and explicit missing categories.
+
+## 17. Timing and performance boundary
 
 `wallClockMs` and observed cycle counts are observations only.
 
-The validator must reject or ignore derived throughput claims such as “MB/s guaranteed”, “works at N meters”, or “universal camera support”.
+The schema contains no field for “guaranteed throughput”, “maximum range”, or “universal compatibility”. The validator rejects evidence metadata that tries to encode such unsupported product claims as ceremony assertions.
 
-A small physical sample cannot establish those claims.
+## 18. Privacy requirements
 
-## 16. Privacy requirements
-
-Authoritative evidence must satisfy all of the following:
+Every authoritative record must satisfy:
 
 - `cameraImageryCaptured === false`;
 - `personalPayloadUsed === false`;
-- no raw Android serial number;
-- no raw build fingerprint when an existing hashed representation is sufficient;
-- no MAC address, IP address, SSID, Bluetooth identifier, or account token;
-- no filesystem path containing a user home name in archived evidence;
+- no raw Android serial;
+- no raw Android build fingerprint where hashed representation is sufficient;
+- no MAC, IP, SSID, Bluetooth ID, account token, or credential;
+- no user-home path in archived JSON;
 - no environment-variable dump;
-- no GitHub token or release credential;
-- no source or received payload bytes in evidence JSON.
+- no source/received payload bytes;
+- no screenshot/video/audio evidence requirement.
 
-Local file paths may be used transiently by the CLI but are omitted or basename-normalized in final evidence.
+Local paths may be used transiently by CLI execution but are omitted or basename-normalized in final evidence.
 
-## 17. Failure policy
+## 19. Failure policy
 
 The kit fails closed on:
 
-- unknown schema version;
-- unknown scenario;
-- missing required keys;
+- unknown schema version or scenario;
+- unknown security-relevant keys;
+- missing required fields;
 - invalid SHA/digest syntax;
+- wrong repository/workflow/run source;
+- PR-only/non-main build used in authoritative mode;
+- missing or inconsistent Windows/Android artifact bindings;
+- immutable preparation-field mutation;
 - source/received size mismatch;
 - source/received SHA mismatch;
-- missing tested binary;
-- artifact/binary identity inconsistency;
-- contradictory platform direction;
-- emulator/virtual-device Android evidence;
-- a required operator observation being false or absent for its scenario;
+- contradictory sender/receiver direction;
+- Android emulator/virtual-device evidence;
+- missing required operator observation for a scenario;
 - privacy contract violation;
-- timestamps with impossible ordering;
-- unknown security-relevant fields;
-- attempt to mark an unprotected/PR-only build lineage as authoritative physical closure.
+- impossible timestamp ordering;
+- incompatible records in one matrix summary.
 
-A failure writes diagnostic output but does not emit a final `result: PASS` record.
+A failed finalization exits non-zero and must not write a record whose `result` is PASS.
 
-## 18. Evidence mutation and canonicalization
+## 20. Canonicalization and evidence mutation
 
-Preparation manifests are immutable inputs to finalization except for explicitly designated observation/result sections.
+Canonical JSON uses stable field ordering and normalized scalar formats so evidence diffs are reviewable.
 
-The finalizer must not silently replace:
+Preparation manifests are immutable except for designated finalization fields. The finalizer must never silently replace:
 
 - control SHA;
-- build SHA;
-- binary hash;
-- source payload hash;
+- build run ID/SHA;
+- artifact IDs/digests/binary hashes;
+- source payload hash/size;
 - scenario;
-- protocol version.
+- protocol version/geometry;
+- ceremony ID.
 
-Canonical output uses stable field ordering and normalized scalar formats so that evidence diffs are reviewable.
+The JSON itself is not a digital signature. Cryptographic evidence signing, if desired later, requires separate design.
 
-The JSON itself is not a digital signature. If future provenance requires cryptographic attestation, that is a separate design.
+## 21. Existing Android collector integration
 
-## 19. Existing Android collector integration
-
-The current Android collector already provides useful machinery:
+The current Android collector already provides useful trusted primitives:
 
 - authorized-device enumeration;
-- emulator rejection using Android properties;
+- emulator rejection through Android properties;
 - installed package checks;
 - CAMERA permission check;
-- camera service ownership observation for the scanner path;
-- sanitized hashes for device serial/build fingerprint;
-- explicit `cameraImageryCaptured: false`.
+- camera service ownership observation;
+- sanitized device serial/build fingerprint hashes;
+- explicit no-camera-imagery evidence.
 
-The ceremony kit should reuse these primitives or normalized output where practical.
+The implementation should reuse/refactor these primitives or normalized output rather than duplicate them.
 
-It must not regress Issue #17 behavior or weaken the existing main-only physical workflow.
+It must not regress Issue #17 behavior or weaken the current main-only Android physical workflow.
 
-## 20. Windows evidence boundary
+## 22. Windows evidence boundary
 
-Windows v1 deliberately avoids covert or invasive camera capture.
+Windows v1 intentionally avoids covert camera capture.
 
-The collector may record non-sensitive OS/runtime/device-class information and presence of an available camera device where this can be done with stable system APIs. It must not capture frames.
+A collector may record non-sensitive OS/runtime/device-class facts and physical camera-device presence where stable system APIs permit. It may not capture frames.
 
-The stronger statement “File QR received this transfer through this physical webcam” comes from the physical ceremony plus exact output equality and operator observation, not from hidden camera surveillance.
+The statement that the File QR receive path used a physical webcam is based on the human physical ceremony plus exact output equality, not hidden surveillance.
 
-## 21. Hosted test strategy
+## 23. Hosted test strategy
 
-Hosted CI proves evidence machinery, not physical optics.
+Hosted CI proves the kit, not physical optics.
 
-Required pure/unit cases include:
+Required pure/unit tests include:
 
 - exact schema acceptance;
-- unknown-key rejection where security-relevant;
+- unknown-key rejection;
 - invalid SHA/digest rejection;
-- source/received length mismatch;
+- deterministic ceremony-ID vector;
+- run/build/artifact consistency;
+- non-main or PR-only build rejection in authoritative mode;
+- two-artifact same-run binding;
+- immutable preparation mutation rejection;
+- source/received size mismatch;
 - source/received SHA mismatch;
-- invalid timestamps;
-- inconsistent build source metadata;
-- PR-only build rejected for authoritative closure;
+- impossible timestamp ordering;
 - each scenario's required observation matrix;
-- >8 MiB threshold boundary;
+- strict `> 8 MiB` threshold boundary;
 - FQR1/FQR2 scenario separation;
-- canonical normalization stability;
-- ceremony-id deterministic vector;
 - privacy violation rejection;
-- raw serial/path leakage rejection.
+- raw serial/path leakage rejection;
+- canonical normalization stability;
+- matrix-complete success;
+- matrix missing-category failure;
+- matrix mixed-build failure.
 
-Required structural cases include:
+Required structural tests include:
 
-- no workflow triggered by pull request is added for physical self-hosted evidence;
-- existing Android physical workflow remains main-only;
-- no screenshots/screencap/screenrecord/video capture are introduced;
-- no GitHub secrets are required by pure validation scripts;
-- production FQR1/FQR2 encoder/decoder behavior is not modified by the evidence-kit PR;
-- package version is unchanged;
-- no signaling/TURN/release/signing code is changed.
+- no physical self-hosted workflow gains `pull_request` or `push` trigger;
+- existing Android physical workflow remains main-only and checks out main;
+- no screenshots/screencap/screenrecord/video capture introduced;
+- no production secrets required by validator/preparation/finalization;
+- no FQR1/FQR2 encoder/decoder/session behavior changed;
+- no signaling/TURN/release/signing code changed;
+- package version unchanged;
+- no dependency graph change unless architecture is reopened and approved.
 
-## 22. TDD lineage requirement
+## 24. TDD lineage requirement
 
 After this written spec is approved:
 
 1. write the implementation plan;
 2. create an isolated implementation branch;
-3. add validator/structure tests first with no production evidence-kit implementation;
-4. preserve a hosted RED commit whose failures correspond only to the absent/new evidence contracts;
-5. add the minimum pure validator/CLI implementation to reach GREEN;
-6. add platform collector integration in separate RED -> GREEN slices;
-7. run full repository CI/build gates on the exact final head;
-8. audit changed-file scope;
-9. keep the PR unmerged while #15 remains open.
+3. add pure validator and structural tests before production kit implementation;
+4. preserve a hosted RED commit whose failures correspond only to absent/new evidence-kit contracts;
+5. implement schema/validator/build-binding in minimal GREEN slices;
+6. add preparation/finalization/matrix-summary CLI slices separately;
+7. integrate Android collector behavior without weakening #17;
+8. add Windows sanitized collector only if it can remain stable and non-invasive;
+9. run all normal repository hosted gates on the exact final head;
+10. audit changed-file scope;
+11. keep the PR unmerged while #15 remains open.
 
-Physical hardware is not required to make the evidence-kit code tests GREEN. It is required to close #50.
+Physical hardware is not required to make evidence-kit code tests GREEN. It is required to close #50.
 
-## 23. Physical ceremony execution after integration
+## 25. Physical ceremony execution after integration
 
-Once protected-main integration exists, the human operator performs each required ceremony using trusted-main kit code and exact integrated native artifacts.
+After #15 closes and both the kit and FQR2 are integrated through protected main:
 
-A typical flow is:
+1. select one exact trusted-main Native Builds run;
+2. obtain both exact Windows and Android artifacts from that run;
+3. run preparation using their artifact metadata and local binaries;
+4. install/open those exact binaries on physical devices;
+5. perform one scenario's physical instructions;
+6. save the received file;
+7. run finalization against that file;
+8. repeat for the remaining scenario matrix;
+9. run matrix-summary over all accepted records;
+10. attach sanitized records + matrix summary to #50.
 
-1. obtain the exact trusted build;
-2. run preparation CLI;
-3. install/open the exact binary on sender/receiver devices;
-4. perform the scenario-specific physical steps;
-5. save the received file;
-6. run finalization CLI against that file;
-7. inspect `result` and diagnostics;
-8. attach sanitized evidence JSON to #50;
-9. retain native artifact/run IDs and hashes in the issue record.
+No step requires camera imagery.
 
-No step requires uploading camera imagery.
+## 26. Issue #50 closure rule
 
-## 24. Issue #50 closure rule
+Issue #50 may close only when:
 
-Issue #50 may close only when all mandatory physical scenarios have accepted evidence bound to the same integrated FQR2 lineage or to explicitly documented compatible integrated heads.
+- #15 is independently closed with real repository protection evidence;
+- mandatory physical records validate PASS;
+- the matrix summary reports complete;
+- evidence is bound to exact integrated main build artifacts;
+- source/received hashes match in every transfer record;
+- all evidence preserves the privacy contract.
 
-A scenario cannot be substituted by:
+None of the following can substitute:
 
 - hosted unit tests;
-- browser automation with synthetic QR strings;
-- an emulator;
-- a screenshot of a QR code;
-- a File QR UI “complete” message without received-file hash equality;
-- an operator statement without the machine-verifiable hashes required by that scenario.
+- synthetic QR strings;
+- emulator/virtual camera;
+- screenshots of QR codes;
+- File QR UI “complete” without independent received hash;
+- PR artifact evidence presented as authoritative closure;
+- a human checklist without required machine hashes.
 
-## 25. Promotion boundary
+## 27. Promotion boundary
 
-Closing #50 only proves the recorded physical matrix.
+Closing #50 proves only the recorded physical matrix.
 
 It does not automatically authorize:
 
 - defaulting sender mode to FQR2;
-- raising file-size limits;
-- publishing universal throughput/range claims;
-- calling SHA-256 sender authentication;
-- bypassing signing/release or branch-protection gates.
+- raising FQR2 size limits;
+- claiming universal throughput/range/camera compatibility;
+- describing SHA-256 as sender authentication;
+- bypassing publisher signing/release gates.
 
-Any such promotion is a separate decision with its own evidence and design requirements.
+Promotion is a separate evidence/design decision.
 
-## 26. Scope guard
+## 28. Scope guard
 
-The evidence-kit implementation PR is expected to touch only evidence model/scripts/tests/docs and the smallest required refactor of the existing Android evidence collector.
+The future evidence-kit implementation PR should touch only evidence model/scripts/tests/docs and the smallest justified reuse/refactor of the existing Android evidence collector.
 
 It must not touch:
 
 - `packages/core/optical.js`;
 - FQR2 encoder/decoder/session behavior;
-- signaling service code;
-- TURN bootstrap/evidence code;
+- signaling services;
+- TURN bootstrap/evidence machinery;
 - native production signing/release workflow logic;
-- dependency graph unless an independently justified need appears;
 - package version;
-- repository branch/ruleset configuration.
+- repository branch/ruleset settings.
 
-If implementation requires any of those, stop and re-open architecture review rather than expanding scope silently.
+If implementation requires any of those, stop and reopen architecture review instead of expanding scope silently.
 
-## 27. Design decision summary
+## 29. Final design decision
 
-The selected architecture is a **Trusted Physical Ceremony Kit**, not an automated pre-merge hardware runner.
+The Trusted Physical Ceremony Kit is deliberately less automated than a full hardware lab because the current repository trust model matters more than convenience.
 
-Its central properties are:
+Its core guarantees are:
 
-- trusted-main control code;
-- exact independent binary and payload hashing;
-- machine evidence separated from human physical observations;
-- deterministic fail-closed validation;
-- no camera imagery capture;
-- no PR code execution on self-hosted physical infrastructure;
-- no transfer-protocol changes;
-- physical evidence obtained only after protected-main integration;
-- explicit distinction between recorded physical observations and stronger claims the data cannot support.
+- control code comes from trusted protected main;
+- one authoritative Native Builds run binds both platform artifacts;
+- actual local binaries and transferred payloads are independently hashed;
+- machine evidence is never confused with operator observation;
+- PASS is derived by separate fail-closed validation;
+- a matrix validator proves scenario coverage;
+- no camera imagery is captured;
+- PR code is not executed on repository self-hosted physical runners;
+- transfer protocol behavior remains untouched;
+- governance (#15), physical evidence (#50), and publisher proof (#9) remain separate authorities.
 
-This provides substantially stronger evidence than a checklist while preserving the repository's existing trust boundaries.
+This yields evidence materially stronger than a checklist without weakening the trust boundaries File QR has already established.
