@@ -94,6 +94,34 @@ test('receiver ignores parts before manifest and owns only one incomplete block 
   assert.deepEqual(writes, []);
 });
 
+test('receiver retries store opening after a transient manifest admission failure', async () => {
+  let openAttempts = 0;
+  const store = {
+    completedBlocks: 0,
+    hasBlock: () => false,
+    async writeVerifiedBlock() {},
+    async finalize() { return new File([], 'sample.bin'); },
+    async abort() {}, async cleanup() {},
+  };
+  const receiver = createFqr2Receiver({
+    openStore: async () => {
+      openAttempts += 1;
+      if (openAttempts === 1) throw new Error('storage temporarily unavailable');
+      return store;
+    },
+  });
+  const manifestFrame = encodeFqr2Manifest({
+    streamId: '0123456789AB', fileSize: 4, symbolBytes: 768,
+    name: 'sample.bin', type: 'application/octet-stream',
+  });
+  await assert.rejects(() => receiver.accept(manifestFrame), /storage temporarily unavailable/);
+  assert.equal(receiver.manifest, null, 'failed storage admission must not lock manifest state');
+  const retry = await receiver.accept(manifestFrame);
+  assert.equal(retry.accepted, true);
+  assert.equal(openAttempts, 2);
+  assert.equal(receiver.manifest.streamId, '0123456789AB');
+});
+
 test('receiver durable progress advances only after verified block storage resolves', async () => {
   let resolveWrite;
   let signalWriteStarted;
