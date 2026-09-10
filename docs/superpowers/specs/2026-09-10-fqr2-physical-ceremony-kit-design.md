@@ -51,8 +51,9 @@ Version 1 must:
 9. fail closed on malformed, incomplete, contradictory, stale, or wrong-build evidence;
 10. produce deterministic sanitized JSON suitable for issue attachment or archival;
 11. validate the complete set of ceremony records so #50 closure is not a manual “looks complete” judgment;
-12. reuse the existing Android physical-device collector where useful;
-13. keep FQR1/FQR2 application behavior unchanged.
+12. reuse the existing Android physical-device collector where useful without weakening #17;
+13. include a non-invasive Windows physical-device collector with a precise camera-presence contract;
+14. keep FQR1/FQR2 application behavior unchanged.
 
 ## 5. Non-goals
 
@@ -140,7 +141,8 @@ Examples:
 - source payload size and SHA-256;
 - received payload size and SHA-256;
 - exact source/received equality;
-- Android emulator rejection and sanitized physical-device facts;
+- Android emulator rejection and camera-service ownership when Android is receiver;
+- Windows PnP camera-device presence when Windows is receiver;
 - scenario/schema consistency;
 - timestamps and deterministic ceremony identifier;
 - whether payload size is above the FQR2 8 MiB fallback threshold.
@@ -156,7 +158,7 @@ Facts that cannot be safely machine-proved without intrusive capture or protocol
 - frames were intentionally obscured or missed;
 - a physical interruption/restart was performed;
 - resumed progress was observed;
-- Windows receiver used the intended physical webcam.
+- Windows receiver actually used the intended physical webcam rather than merely having one present.
 
 These fields live only under `operatorObservations` and are never relabeled as machine proof.
 
@@ -167,6 +169,7 @@ The validator derives claims such as:
 - `buildBindingComplete`;
 - `exactBytesMatch`;
 - `privacyContractComplete`;
+- `receiverHardwarePrerequisitesComplete`;
 - `midCycleJoinClaimComplete`;
 - `repairPhaseClaimComplete`;
 - `largeFileClaimComplete`;
@@ -234,17 +237,22 @@ The preparation CLI:
 
 ### 8.4 Platform collectors
 
-Android v1 reuses/refactors the current collector primitives for:
+Android v1 refactors the existing collector so shared device facts are reusable without changing Issue #17 behavior:
 
-- exactly one authorized ADB device;
-- emulator rejection;
-- package identity/version;
-- CAMERA permission;
-- sanitized device class;
-- optional camera-service ownership check where the scenario uses Android as receiver;
-- explicit `cameraImageryCaptured: false`.
+- `collectAndroidDeviceFacts` records exactly one authorized ADB device, emulator rejection, package identity/version, CAMERA permission, and sanitized device class;
+- the existing Issue #17 collector continues to require scanner launch, camera-service ownership, app recovery, and no imagery capture;
+- FQR2 ceremonies where Android is **receiver** require camera-service ownership for File QR during the scan path;
+- FQR2 ceremonies where Android is **sender** require physical-device facts but do not invent a receiver-camera requirement.
 
-Windows v1 records only non-sensitive platform facts and, where stable APIs permit, physical camera-device presence. It does not capture camera frames. The stronger claim that the actual transfer used a physical webcam remains an operator observation plus exact output equality.
+Windows v1 includes a dedicated collector:
+
+- it records Windows OS release/version and architecture in sanitized form;
+- it uses PowerShell `Get-PnpDevice -Class Camera` (or the implementation's exact equivalent locked by tests) to derive only a non-sensitive `cameraDevicePresent` boolean and optional device count;
+- it stores no PnP instance IDs, serials, device paths, camera frames, screenshots, or device names;
+- Windows **receiver** scenarios require `cameraDevicePresent === true`;
+- Windows **sender** scenarios do not require a camera device.
+
+Camera presence is not proof of actual optical use; actual use remains an operator physical observation plus exact transfer equality.
 
 ### 8.5 Finalization and matrix-summary CLI
 
@@ -252,7 +260,7 @@ Per ceremony, finalization:
 
 1. loads the immutable preparation manifest;
 2. independently hashes the received file;
-3. imports sanitized collector facts;
+3. imports sanitized platform collector facts;
 4. records structured operator observations;
 5. invokes the pure validator;
 6. writes final evidence JSON only from normalized data;
@@ -270,8 +278,8 @@ Exact filenames may be refined by the implementation plan, but intended boundari
 - `scripts/prepare-optical-physical-evidence.mjs` — run/artifact binding + payload preparation;
 - `scripts/finalize-optical-physical-evidence.mjs` — received-file hashing + final validation;
 - `scripts/summarize-optical-physical-evidence.mjs` — #50 matrix aggregation;
-- `scripts/collect-android-physical-evidence.mjs` — reuse/refactor only where necessary;
-- optional `scripts/collect-windows-physical-evidence.mjs` — sanitized Windows facts only;
+- `scripts/collect-android-physical-evidence.mjs` — minimal reuse/refactor preserving #17;
+- `scripts/collect-windows-physical-evidence.mjs` — sanitized Windows/PnP facts;
 - `tests/core/physical-evidence.test.mjs`;
 - `tests/structure/physical-evidence-kit.test.mjs`;
 - `docs/physical-evidence/FQR2-CEREMONY.md` — operator instructions added with implementation.
@@ -461,6 +469,7 @@ Requires:
 - FQR2;
 - Windows sender and Android receiver direction;
 - Android physical-device collector success;
+- Android camera-service ownership observed for File QR during scan;
 - physical display-to-camera operator observation;
 - no virtual camera/prerecorded-media observation;
 - exact received-byte equality.
@@ -471,13 +480,16 @@ Requires:
 
 - FQR2;
 - Android sender and Windows receiver direction;
-- physical webcam operator observation;
+- Windows collector `cameraDevicePresent === true`;
+- physical webcam-use operator observation;
 - no virtual camera/prerecorded-media observation;
 - exact received-byte equality.
 
 ### 15.3 FQR1 compatibility
 
 At least one physical receive ceremony for each receiver platform class must retain FQR1 evidence.
+
+When Android is receiver, Android camera-service ownership is required. When Windows is receiver, Windows `cameraDevicePresent === true` is required.
 
 FQR1 evidence is never used to infer FQR2 behavior.
 
@@ -529,6 +541,7 @@ The summary validator consumes final PASS records and verifies:
 - FQR1 compatibility exists for both receiver platform classes;
 - FQR2 directionality exists both ways;
 - mid-cycle, repair-phase, >8 MiB, and interruption/resume evidence are each present;
+- receiver hardware prerequisites pass for each receiver platform;
 - privacy requirements pass for every included record.
 
 The output is a deterministic summary with `matrixComplete: true | false` and explicit missing categories.
@@ -547,6 +560,7 @@ Every authoritative record must satisfy:
 - `personalPayloadUsed === false`;
 - no raw Android serial;
 - no raw Android build fingerprint where hashed representation is sufficient;
+- no Windows PnP instance ID or camera device name;
 - no MAC, IP, SSID, Bluetooth ID, account token, or credential;
 - no user-home path in archived JSON;
 - no environment-variable dump;
@@ -571,6 +585,8 @@ The kit fails closed on:
 - source/received SHA mismatch;
 - contradictory sender/receiver direction;
 - Android emulator/virtual-device evidence;
+- missing Android camera-service ownership when Android is receiver;
+- missing Windows PnP camera presence when Windows is receiver;
 - missing required operator observation for a scenario;
 - privacy contract violation;
 - impossible timestamp ordering;
@@ -596,27 +612,29 @@ The JSON itself is not a digital signature. Cryptographic evidence signing, if d
 
 ## 21. Existing Android collector integration
 
-The current Android collector already provides useful trusted primitives:
+The current Android collector already provides trusted primitives for device discovery, emulator rejection, installed-package checks, CAMERA permission, camera-service ownership, sanitized device hashes, and explicit no-imagery behavior.
 
-- authorized-device enumeration;
-- emulator rejection through Android properties;
-- installed package checks;
-- CAMERA permission check;
-- camera service ownership observation;
-- sanitized device serial/build fingerprint hashes;
-- explicit no-camera-imagery evidence.
+Implementation must split reusable physical-device fact collection from the scanner-specific #17 ceremony without changing the public behavior of `collectPhysicalAndroidEvidence()` or weakening the existing main-only physical workflow.
 
-The implementation should reuse/refactor these primitives or normalized output rather than duplicate them.
+Android receiver ceremonies reuse the scanner/camera-owner proof. Android sender ceremonies use only sanitized physical-device/package facts because sender mode does not consume camera authority.
 
-It must not regress Issue #17 behavior or weaken the current main-only Android physical workflow.
+## 22. Windows collector contract
 
-## 22. Windows evidence boundary
+`collect-windows-physical-evidence.mjs` is part of v1, not an optional extension.
 
-Windows v1 intentionally avoids covert camera capture.
+It records only:
 
-A collector may record non-sensitive OS/runtime/device-class facts and physical camera-device presence where stable system APIs permit. It may not capture frames.
+- Windows platform marker;
+- sanitized OS release/version;
+- architecture;
+- `cameraDevicePresent` boolean;
+- optional numeric camera-device count.
 
-The statement that the File QR receive path used a physical webcam is based on the human physical ceremony plus exact output equality, not hidden surveillance.
+The camera-presence probe uses an explicit PowerShell PnP-device query locked by tests. It stores neither returned names nor PnP instance IDs.
+
+For a Windows receiver ceremony, an unavailable/failed PnP query or zero camera devices fails the receiver-hardware prerequisite. For a Windows sender ceremony, camera presence is not required.
+
+The collector never captures camera frames.
 
 ## 23. Hosted test strategy
 
@@ -636,10 +654,12 @@ Required pure/unit tests include:
 - source/received SHA mismatch;
 - impossible timestamp ordering;
 - each scenario's required observation matrix;
+- Android receiver camera-owner required / Android sender not required;
+- Windows receiver PnP camera presence required / Windows sender not required;
 - strict `> 8 MiB` threshold boundary;
 - FQR1/FQR2 scenario separation;
 - privacy violation rejection;
-- raw serial/path leakage rejection;
+- raw serial/path/PnP-identifier leakage rejection;
 - canonical normalization stability;
 - matrix-complete success;
 - matrix missing-category failure;
@@ -650,6 +670,7 @@ Required structural tests include:
 - no physical self-hosted workflow gains `pull_request` or `push` trigger;
 - existing Android physical workflow remains main-only and checks out main;
 - no screenshots/screencap/screenrecord/video capture introduced;
+- Windows collector source contains no frame/screenshot capture path;
 - no production secrets required by validator/preparation/finalization;
 - no FQR1/FQR2 encoder/decoder/session behavior changed;
 - no signaling/TURN/release/signing code changed;
@@ -666,8 +687,8 @@ After this written spec is approved:
 4. preserve a hosted RED commit whose failures correspond only to absent/new evidence-kit contracts;
 5. implement schema/validator/build-binding in minimal GREEN slices;
 6. add preparation/finalization/matrix-summary CLI slices separately;
-7. integrate Android collector behavior without weakening #17;
-8. add Windows sanitized collector only if it can remain stable and non-invasive;
+7. refactor Android device-fact reuse while preserving all #17 tests;
+8. add the Windows sanitized/PnP collector as its own RED -> GREEN slice;
 9. run all normal repository hosted gates on the exact final head;
 10. audit changed-file scope;
 11. keep the PR unmerged while #15 remains open.
@@ -700,6 +721,7 @@ Issue #50 may close only when:
 - the matrix summary reports complete;
 - evidence is bound to exact integrated main build artifacts;
 - source/received hashes match in every transfer record;
+- receiver hardware prerequisites are present for every physical receiver ceremony;
 - all evidence preserves the privacy contract.
 
 None of the following can substitute:
@@ -751,6 +773,7 @@ Its core guarantees are:
 - control code comes from trusted protected main;
 - one authoritative Native Builds run binds both platform artifacts;
 - actual local binaries and transferred payloads are independently hashed;
+- Android receiver camera ownership and Windows receiver camera presence have explicit machine prerequisites;
 - machine evidence is never confused with operator observation;
 - PASS is derived by separate fail-closed validation;
 - a matrix validator proves scenario coverage;
