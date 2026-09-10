@@ -27,9 +27,9 @@ test('decoder deduplicates sequence identities without growing state', async () 
 
 test('inconsistent degree-zero equation is rejected', async () => {
   const decoder = new Fqr2BlockDecoder({ blockLength: 16, symbolBytes: 4, blockSha256: BLOCK_SHA });
-  await decoder.accept({ seqNum: 1, payload: Uint8Array.from([0,1,2,3]) });
+  await decoder.accept({ seqNum: 2, payload: Uint8Array.from([4,5,6,7]) });
   await assert.rejects(
-    () => decoder.accept({ seqNum: 5, payload: Uint8Array.from([9,9,9,9]) }),
+    () => decoder.accept({ seqNum: 7, payload: Uint8Array.from([9,9,9,9]) }),
     /inconsistent|equation/i,
   );
   assert.equal(decoder.solvedCount, 1);
