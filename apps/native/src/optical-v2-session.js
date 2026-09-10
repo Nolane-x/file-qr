@@ -124,8 +124,9 @@ export function createFqr2Receiver(options = {}) {
       if (!sameManifest(manifest, parsed)) throw new Error('FQR2 manifest conflict');
       return { accepted: false, duplicate: true, manifest };
     }
+    const nextStore = await openStore(parsed);
     manifest = parsed;
-    store = await openStore(manifest);
+    store = nextStore;
     return { accepted: true, duplicate: false, manifest };
   }
 
