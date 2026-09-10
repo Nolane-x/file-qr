@@ -13,6 +13,8 @@ function run(overrides = {}) {
     event: 'push',
     head_branch: 'main',
     head_sha: SHA,
+    status: 'completed',
+    conclusion: 'success',
     repository: { full_name: 'Nolane-x/file-qr' },
     ...overrides,
   };
@@ -32,7 +34,7 @@ function stub({ runValue = run(), artifactsValue = artifacts() } = {}) {
   return (endpoint) => JSON.stringify(endpoint.endsWith('/artifacts') ? artifactsValue : runValue);
 }
 
-test('resolver accepts exactly one main Native Builds run with both artifacts', () => {
+test('resolver accepts exactly one successful completed main Native Builds run with both artifacts', () => {
   const resolved = resolveNativeBuild({ runId: 123, execGh: stub() });
   assert.equal(resolved.repository, 'Nolane-x/file-qr');
   assert.equal(resolved.workflow, 'Native Builds');
@@ -44,12 +46,15 @@ test('resolver accepts exactly one main Native Builds run with both artifacts', 
   assert.equal(resolved.artifacts.android.artifactId, 11);
 });
 
-test('resolver rejects wrong repository, workflow, event and branch', () => {
+test('resolver rejects wrong repository, workflow, event, branch, status and conclusion', () => {
   for (const bad of [
     run({ repository: { full_name: 'other/repo' } }),
     run({ name: 'CI' }),
     run({ event: 'pull_request' }),
     run({ head_branch: 'feature' }),
+    run({ status: 'in_progress', conclusion: null }),
+    run({ status: 'completed', conclusion: 'failure' }),
+    run({ status: 'completed', conclusion: 'cancelled' }),
   ]) {
     assert.throws(() => resolveNativeBuild({ runId: 123, execGh: stub({ runValue: bad }) }), /FQR_EVIDENCE_GITHUB_AUTHORITY/);
   }
