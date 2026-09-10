@@ -137,6 +137,43 @@ test('browser OPFS missing sidecar still removes orphan partial data', async () 
   }
 });
 
+test('browser OPFS data-size access errors are not downgraded to an empty file', async () => {
+  const dataKey = `fqr2_${manifest().streamId}.part`;
+  const metaKey = `fqr2_${manifest().streamId}.json`;
+  const root = {
+    async getFileHandle(key) {
+      if (key === metaKey) throw new DOMException('missing', 'NotFoundError');
+      if (key === dataKey) throw new DOMException('denied', 'SecurityError');
+      throw new DOMException('missing', 'NotFoundError');
+    },
+    async removeEntry() {},
+  };
+  const restoreNavigator = installFakeNavigator(root);
+  try {
+    await assert.rejects(() => createOpticalBlockStore(manifest()), error => error?.name === 'SecurityError');
+  } finally {
+    restoreNavigator();
+  }
+});
+
+test('browser OPFS cleanup ignores only missing entries and propagates delete failures', async () => {
+  const metaKey = `fqr2_${manifest().streamId}.json`;
+  const root = {
+    async getFileHandle(key) {
+      if (key === metaKey) throw new DOMException('missing', 'NotFoundError');
+      throw new DOMException('missing', 'NotFoundError');
+    },
+    async removeEntry() { throw new DOMException('write protected', 'NoModificationAllowedError'); },
+  };
+  const restoreNavigator = installFakeNavigator(root);
+  try {
+    const store = await createOpticalBlockStore(manifest());
+    await assert.rejects(() => store.cleanup(), error => error?.name === 'NoModificationAllowedError');
+  } finally {
+    restoreNavigator();
+  }
+});
+
 test('finalize requires all logical blocks and exact file size', async () => {
   const adapter = makeAdapter();
   const store = await createOpticalBlockStore(manifest(), { adapter });
