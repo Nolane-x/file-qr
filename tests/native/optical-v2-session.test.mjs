@@ -96,10 +96,16 @@ test('receiver ignores parts before manifest and owns only one incomplete block 
 
 test('receiver durable progress advances only after verified block storage resolves', async () => {
   let resolveWrite;
+  let signalWriteStarted;
+  const writeStarted = new Promise(resolve => { signalWriteStarted = resolve; });
   const store = {
     completedBlocks: 0,
     hasBlock: () => false,
-    async writeVerifiedBlock() { await new Promise(resolve => { resolveWrite = resolve; }); this.completedBlocks = 1; },
+    async writeVerifiedBlock() {
+      signalWriteStarted();
+      await new Promise(resolve => { resolveWrite = resolve; });
+      this.completedBlocks = 1;
+    },
     async finalize() { return new File([Uint8Array.from([1,2,3,4])], 'x.bin'); },
     async abort() {}, async cleanup() {},
   };
@@ -116,7 +122,7 @@ test('receiver durable progress advances only after verified block storage resol
     payload: Uint8Array.from([1,2,3,4, ...new Array(764).fill(0)]),
   });
   const pending = receiver.accept(part);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await writeStarted;
   assert.equal(receiver.completedBlocks, 0);
   resolveWrite();
   await pending;
