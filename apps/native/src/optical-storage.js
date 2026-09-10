@@ -138,8 +138,12 @@ async function createBrowserOpfsAdapter() {
       await writable.close();
     },
     async dataSize(key) {
-      try { return (await (await getFileHandle(key, false)).getFile()).size; }
-      catch { return 0; }
+      try {
+        return (await (await getFileHandle(key, false)).getFile()).size;
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return 0;
+        throw error;
+      }
     },
     async readAll(key) {
       const file = await (await getFileHandle(key, false)).getFile();
@@ -147,7 +151,11 @@ async function createBrowserOpfsAdapter() {
     },
     async getFile(key) { return (await getFileHandle(key, false)).getFile(); },
     async remove(key) {
-      try { await root.removeEntry(key); } catch { /* already absent */ }
+      try {
+        await root.removeEntry(key);
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
     },
   };
 }
