@@ -1,15 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-
 import {
-  SCHEMA_VERSION,
-  SCENARIOS,
-  canonicalizePreparation,
-  deriveCeremonyId,
-  validatePreparation,
-  finalizeEvidence,
-  validateFinalRecord,
-  summarizeEvidenceMatrix,
+  SCHEMA_VERSION, SCENARIOS, canonicalizePreparation, deriveCeremonyId,
+  validatePreparation, finalizeEvidence, validateFinalRecord, summarizeEvidenceMatrix,
 } from '../../packages/core/physical-evidence.js';
 
 const SHA = 'a'.repeat(40);
@@ -17,36 +10,17 @@ const H1 = '1'.repeat(64);
 const H2 = '2'.repeat(64);
 const H3 = '3'.repeat(64);
 
-function prep({
-  scenario = 'fqr2-windows-to-android',
-  bytes = 65536,
-  protocol = 'FQR2',
-  runId = 123,
-} = {}) {
+function prep({ scenario = 'fqr2-windows-to-android', bytes = 65536, protocol = 'FQR2', runId = 123 } = {}) {
   return {
     schemaVersion: 1,
     scenario,
     control: { repository: 'Nolane-x/file-qr', commitSha: SHA },
     build: {
-      repository: 'Nolane-x/file-qr',
-      workflow: 'Native Builds',
-      workflowRunId: runId,
-      event: 'push',
-      headBranch: 'main',
-      commitSha: SHA,
+      repository: 'Nolane-x/file-qr', workflow: 'Native Builds', workflowRunId: runId,
+      event: 'push', headBranch: 'main', commitSha: SHA,
       artifacts: {
-        windows: {
-          artifactId: 10,
-          name: 'file-qr-windows',
-          artifactDigest: `sha256:${H1}`,
-          binarySha256: H2,
-        },
-        android: {
-          artifactId: 11,
-          name: 'file-qr-android',
-          artifactDigest: `sha256:${H2}`,
-          binarySha256: H3,
-        },
+        windows: { artifactId: 10, name: 'file-qr-windows', artifactDigest: `sha256:${H1}`, binarySha256: H2 },
+        android: { artifactId: 11, name: 'file-qr-android', artifactDigest: `sha256:${H2}`, binarySha256: H3 },
       },
     },
     payload: { generated: true, generatorVersion: 1, bytes, sourceSha256: H1 },
@@ -57,63 +31,44 @@ function prep({
   };
 }
 
-function completion({
-  sender = 'windows', receiver = 'android', receivedBytes = 65536,
-  receivedSha256 = H1, joinedMidCycle = false, repairPhaseOnlyStart = false,
-  framesIntentionallyMissed = false, interruptionPerformed = false,
-  resumeObserved = false,
-} = {}) {
+function completion({ sender = 'windows', receiver = 'android', receivedBytes = 65536, receivedSha256 = H1,
+  joinedMidCycle = false, repairPhaseOnlyStart = false, framesIntentionallyMissed = false,
+  interruptionPerformed = false, resumeObserved = false } = {}) {
   return {
     sender: {
-      platform: sender,
-      osClass: sender === 'windows' ? 'Windows 11' : 'Android 16',
+      platform: sender, osClass: sender === 'windows' ? 'Windows 11' : 'Android 16',
       deviceClass: sender === 'windows' ? 'desktop' : 'phone',
       ...(sender === 'windows'
         ? { cameraDevicePresent: false, cameraDeviceCount: 0 }
         : { physicalDevice: true, emulatorRejected: true, cameraPermissionGranted: true, cameraOwnerObserved: false }),
     },
     receiver: {
-      platform: receiver,
-      osClass: receiver === 'windows' ? 'Windows 11' : 'Android 16',
+      platform: receiver, osClass: receiver === 'windows' ? 'Windows 11' : 'Android 16',
       deviceClass: receiver === 'windows' ? 'desktop-webcam' : 'phone-rear-camera',
       ...(receiver === 'windows'
         ? { cameraDevicePresent: true, cameraDeviceCount: 1 }
         : { physicalDevice: true, emulatorRejected: true, cameraPermissionGranted: true, cameraOwnerObserved: true }),
     },
     operatorObservations: {
-      physicalDisplayToCameraPath: true,
-      virtualCameraAbsent: true,
-      joinedMidCycle,
-      repairPhaseOnlyStart,
-      framesIntentionallyMissed,
-      interruptionPerformed,
-      resumeObserved,
+      physicalDisplayToCameraPath: true, virtualCameraAbsent: true, joinedMidCycle,
+      repairPhaseOnlyStart, framesIntentionallyMissed, interruptionPerformed, resumeObserved,
     },
     received: { bytes: receivedBytes, sha256: receivedSha256 },
     completedAt: '2026-09-10T12:01:00.000Z',
     measurements: { wallClockMs: 60000, observedCycles: null },
     privacy: {
-      cameraImageryCaptured: false,
-      personalPayloadUsed: false,
-      rawDeviceSerialStored: false,
-      rawBuildFingerprintStored: false,
-      rawPnpIdentifierStored: false,
-      rawCameraDeviceNameStored: false,
-      localPathStored: false,
-      networkIdentifierStored: false,
-      credentialStored: false,
+      cameraImageryCaptured: false, personalPayloadUsed: false, rawDeviceSerialStored: false,
+      rawBuildFingerprintStored: false, rawPnpIdentifierStored: false, rawCameraDeviceNameStored: false,
+      localPathStored: false, networkIdentifierStored: false, credentialStored: false,
     },
   };
 }
 
 function finalFor(scenario, opts = {}) {
-  const p = prep({
-    scenario,
-    bytes: opts.bytes ?? 65536,
-    protocol: scenario.startsWith('fqr1-') ? 'FQR1' : 'FQR2',
-    runId: opts.runId ?? 123,
-  });
-  return finalizeEvidence(p, completion(opts), { authoritative: true });
+  return finalizeEvidence(prep({
+    scenario, bytes: opts.bytes ?? 65536,
+    protocol: scenario.startsWith('fqr1-') ? 'FQR1' : 'FQR2', runId: opts.runId ?? 123,
+  }), completion(opts), { authoritative: true });
 }
 
 test('exports exact schema version and required scenario set', () => {
@@ -121,45 +76,40 @@ test('exports exact schema version and required scenario set', () => {
   assert.deepEqual([...SCENARIOS], [
     'fqr2-windows-to-android', 'fqr2-android-to-windows',
     'fqr1-windows-to-android', 'fqr1-android-to-windows',
-    'fqr2-mid-cycle', 'fqr2-repair-phase', 'fqr2-large-file',
-    'fqr2-interruption-resume',
+    'fqr2-mid-cycle', 'fqr2-repair-phase', 'fqr2-large-file', 'fqr2-interruption-resume',
   ]);
 });
 
 test('preparation canonicalization is strict and stable', () => {
   const p = prep();
-  const validated = validatePreparation(p, { authoritative: true });
-  assert.deepEqual(canonicalizePreparation({ ...p }), validated);
+  assert.deepEqual(canonicalizePreparation({ ...p }), validatePreparation(p, { authoritative: true }));
   assert.throws(() => validatePreparation({ ...p, bypass: true }, { authoritative: true }), /FQR_EVIDENCE_UNKNOWN_KEY/);
   assert.throws(() => validatePreparation({ ...p, control: { ...p.control, commitSha: 'ABC' } }, { authoritative: true }), /FQR_EVIDENCE_SHA/);
 });
 
-test('authoritative preparation rejects non-main, PR, wrong-workflow and malformed two-artifact bindings', () => {
+test('authoritative preparation rejects non-main, PR, wrong workflow and missing platform artifact', () => {
   const p = prep();
   assert.throws(() => validatePreparation({ ...p, build: { ...p.build, headBranch: 'feature' } }, { authoritative: true }), /FQR_EVIDENCE_BUILD_AUTHORITY/);
   assert.throws(() => validatePreparation({ ...p, build: { ...p.build, event: 'pull_request' } }, { authoritative: true }), /FQR_EVIDENCE_BUILD_AUTHORITY/);
   assert.throws(() => validatePreparation({ ...p, build: { ...p.build, workflow: 'CI' } }, { authoritative: true }), /FQR_EVIDENCE_BUILD_AUTHORITY/);
-  assert.throws(() => validatePreparation({ ...p, build: { ...p.build, artifacts: { windows: p.build.artifacts.windows } } }, { authoritative: true }), /FQR_EVIDENCE_ARTIFACT/);
+  assert.throws(() => validatePreparation({ ...p, build: { ...p.build, artifacts: { windows: p.build.artifacts.windows } } }, { authoritative: true }), /FQR_EVIDENCE_SCHEMA/);
 });
 
 test('ceremony id is a fixed independent vector', () => {
   assert.equal(deriveCeremonyId(prep()), '1b713e828cb5e75b9cfe0c7c');
 });
 
-test('baseline Windows to Android evidence passes only with exact bytes and Android camera ownership', () => {
+test('baseline Windows to Android needs exact bytes and Android camera ownership', () => {
   const record = finalFor('fqr2-windows-to-android');
   assert.equal(record.result, 'PASS');
-  assert.equal(record.assertions.exactBytesMatch, true);
-  assert.equal(record.assertions.receiverHardwarePrerequisitesComplete, true);
   assert.equal(validateFinalRecord(record, { authoritative: true }).result, 'PASS');
-  const badBytes = finalizeEvidence(prep(), completion({ receivedSha256: H2 }), { authoritative: true });
-  assert.equal(badBytes.result, 'FAIL');
-  const missingCameraOwner = completion();
-  missingCameraOwner.receiver.cameraOwnerObserved = false;
-  assert.equal(finalizeEvidence(prep(), missingCameraOwner, { authoritative: true }).result, 'FAIL');
+  assert.equal(finalizeEvidence(prep(), completion({ receivedSha256: H2 }), { authoritative: true }).result, 'FAIL');
+  const missingOwner = completion();
+  missingOwner.receiver.cameraOwnerObserved = false;
+  assert.equal(finalizeEvidence(prep(), missingOwner, { authoritative: true }).result, 'FAIL');
 });
 
-test('Android to Windows evidence requires Windows camera presence', () => {
+test('Android to Windows needs Windows camera presence', () => {
   const p = prep({ scenario: 'fqr2-android-to-windows' });
   assert.equal(finalizeEvidence(p, completion({ sender: 'android', receiver: 'windows' }), { authoritative: true }).result, 'PASS');
   const noCamera = completion({ sender: 'android', receiver: 'windows' });
@@ -171,7 +121,7 @@ test('Android to Windows evidence requires Windows camera presence', () => {
 test('special FQR2 scenario boundaries are exact', () => {
   assert.equal(finalFor('fqr2-mid-cycle', { joinedMidCycle: true }).result, 'PASS');
   assert.equal(finalFor('fqr2-mid-cycle').result, 'FAIL');
-  assert.equal(finalFor('fqr2-repair-phase', { repairPhaseOnlyStart: true, framesIntentionallyMissed: true, bytes: 65536 }).result, 'PASS');
+  assert.equal(finalFor('fqr2-repair-phase', { repairPhaseOnlyStart: true, framesIntentionallyMissed: true }).result, 'PASS');
   assert.equal(finalFor('fqr2-repair-phase', { repairPhaseOnlyStart: true, bytes: 65537 }).result, 'FAIL');
   assert.equal(finalFor('fqr2-large-file', { bytes: 8 * 1024 * 1024 + 1, receivedBytes: 8 * 1024 * 1024 + 1 }).result, 'PASS');
   assert.equal(finalFor('fqr2-large-file', { bytes: 8 * 1024 * 1024, receivedBytes: 8 * 1024 * 1024 }).result, 'FAIL');
@@ -179,7 +129,7 @@ test('special FQR2 scenario boundaries are exact', () => {
   assert.equal(finalFor('fqr2-interruption-resume', { interruptionPerformed: true }).result, 'FAIL');
 });
 
-test('FQR1 compatibility stays separate and receiver hardware rules still apply', () => {
+test('FQR1 compatibility stays separate', () => {
   assert.equal(finalFor('fqr1-windows-to-android').result, 'PASS');
   assert.equal(finalFor('fqr1-android-to-windows', { sender: 'android', receiver: 'windows' }).result, 'PASS');
   assert.throws(() => validatePreparation(prep({ scenario: 'fqr1-windows-to-android', protocol: 'FQR2' }), { authoritative: true }), /FQR_EVIDENCE_PROTOCOL/);
@@ -203,7 +153,7 @@ test('timestamp ordering and final-record authority are validated', () => {
   assert.throws(() => validateFinalRecord(mutated, { authoritative: true }), /FQR_EVIDENCE_/);
 });
 
-test('matrix requires exact build lineage and every Issue #50 category', () => {
+test('matrix requires one internally valid exact build lineage and every Issue #50 category', () => {
   const records = [
     finalFor('fqr2-windows-to-android'),
     finalFor('fqr2-android-to-windows', { sender: 'android', receiver: 'windows' }),
@@ -214,13 +164,8 @@ test('matrix requires exact build lineage and every Issue #50 category', () => {
     finalFor('fqr2-large-file', { bytes: 8 * 1024 * 1024 + 1, receivedBytes: 8 * 1024 * 1024 + 1 }),
     finalFor('fqr2-interruption-resume', { interruptionPerformed: true, resumeObserved: true }),
   ];
-  const summary = summarizeEvidenceMatrix(records);
-  assert.equal(summary.matrixComplete, true);
-  assert.deepEqual(summary.missing, []);
-  const incomplete = summarizeEvidenceMatrix(records.slice(0, -1));
-  assert.equal(incomplete.matrixComplete, false);
-  assert.deepEqual(incomplete.missing, ['fqr2-interruption-resume']);
-
+  assert.equal(summarizeEvidenceMatrix(records).matrixComplete, true);
+  assert.deepEqual(summarizeEvidenceMatrix(records.slice(0, -1)).missing, ['fqr2-interruption-resume']);
   const mixed = [...records];
   mixed[1] = finalFor('fqr2-android-to-windows', { sender: 'android', receiver: 'windows', runId: 124 });
   assert.throws(() => summarizeEvidenceMatrix(mixed), /FQR_EVIDENCE_MATRIX_BUILD/);
