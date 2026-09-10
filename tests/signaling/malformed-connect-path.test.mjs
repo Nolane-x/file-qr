@@ -6,10 +6,12 @@ async function loadSignalingWorker() {
   const sourceUrl = new URL('../../services/signaling/src/index.js', import.meta.url);
   let source = await fs.readFile(sourceUrl, 'utf8');
   const sessionUrl = new URL('../../packages/core/session.js', import.meta.url).href;
+  const resourceRoutesUrl = new URL('../../services/signaling/src/resource-routes.js', import.meta.url).href;
 
   source = source
     .replace("import { DurableObject } from 'cloudflare:workers';", 'class DurableObject {}')
-    .replace("from '../../../packages/core/session.js';", `from '${sessionUrl}';`);
+    .replace("from '../../../packages/core/session.js';", `from '${sessionUrl}';`)
+    .replace("from './resource-routes.js';", `from '${resourceRoutesUrl}';`);
 
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 }

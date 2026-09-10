@@ -36,10 +36,38 @@ The sender owns ICE restart to avoid offer glare. A disconnected state receives 
 
 ## Offline optical path
 
-Optical v0.1 remains deliberately separate from online protocol v2 and is a conservative baseline, not a fountain-code claim. A file envelope contains UTF-8 metadata plus exact file bytes. The envelope is divided into versioned `FQR1` frames:
+The optical path is versioned separately from online WebRTC protocol v2. It does not use signaling, STUN, TURN, or the online lease, and neither optical version authenticates the sender.
+
+### QR Stream v0.1 compatibility format
+
+Optical v0.1 remains the conservative compatibility path. A file envelope contains UTF-8 metadata plus exact file bytes. The envelope is divided into independent frames:
 
 `FQR1|STREAM_ID|SEQUENCE|TOTAL|CRC32|BASE64URL_PAYLOAD`
 
-Each QR frame has an independent CRC32. The receiver deduplicates frames, tracks missing sequence numbers, and reconstructs only after every frame is present. The sender loops the sequence so camera misses can be filled on later passes. CRC32 detects accidental corruption; it is not cryptographic authentication.
+Each frame has an independent CRC32. The receiver deduplicates frames, tracks missing sequence numbers, and reconstructs only after every frame is present. The sender loops the sequence so camera misses can be filled on later passes. CRC32 detects accidental corruption; it is not cryptographic authentication. The existing v0.1 sender keeps its 8 MiB admission limit and ten-minute broadcast stop.
 
-Future optical versions may add fountain/FEC blocks or non-QR visual modulation without changing the online protocol v2 contract.
+### QR Stream v0.2 experimental block-fountain format
+
+FQR2 is an experimental offline transport. The initial implementation admits files up to **64 MiB**, uses fixed **64 KiB logical blocks**, defaults to **768-byte source symbols**, and keeps FQR1 available as the default compatibility sender mode. The native camera receiver routes exact `FQR1|` and `FQR2|` prefixes before either decoder mutates state.
+
+A manifest frame is:
+
+`FQR2|M|STREAM_ID|FILE_SIZE|BLOCK_BYTES|SYMBOL_BYTES|BLOCK_COUNT|METADATA_CRC32|BASE64URL_METADATA`
+
+A part frame is:
+
+`FQR2|P|STREAM_ID|BLOCK_INDEX|SEQ_NUM|SEQ_LEN|BLOCK_LENGTH|BLOCK_SHA256|PAYLOAD_CRC32|BASE64URL_PAYLOAD`
+
+FQR2 uses a 12-character Crockford-style stream identifier. `BLOCK_BYTES` is fixed at `65536`. `SYMBOL_BYTES` is bounded to 256..900 bytes and defaults to 768. Metadata is UTF-8 JSON containing only `name` and `type`, is capped at 2048 bytes, and is protected by CRC32. Part payloads are also CRC32-checked before decoding.
+
+For each block, sequence numbers `1..K` are systematic source symbols. Later sequence numbers deterministically select and XOR source-symbol indexes using the protocol's SHA-256-bound xoshiro256** selector and harmonic degree distribution. These repair symbols are deterministic protocol behavior, not sender authentication.
+
+The receiver owns at most one incomplete block decoder at a time. Unknown/other-block parts are not queued while another block is active. Unresolved equations are capped at `3 * K`, and remembered sequence identities are capped at `4 * K`, with deterministic eviction. Camera ingestion is single-flight; a frame observed while asynchronous FQR2 acceptance is already running is dropped rather than accumulated in an unbounded queue.
+
+CRC32 filters corrupted individual frame payloads. A reconstructed block is not durable or exposed until its declared SHA-256 digest matches. SHA-256 provides block integrity against accidental/corrupt reconstruction but does **not** authenticate who generated the stream.
+
+Verified blocks are written at exact offsets to random-access persistent storage, with block data committed before sidecar progress. Reopen trusts only sidecar-recorded committed blocks whose manifest identity and durable byte boundaries validate. Whole-file memory fallback is allowed only when `FILE_SIZE <= 8 MiB`; larger FQR2 receives fail closed when persistent random-access storage is unavailable. Finalization requires every logical block and the exact declared file size.
+
+The FQR2 sender reads one 64 KiB block at a time through file slices and does not pre-read the whole file or precompute all frames. FQR2 continues until explicitly stopped/runtime close and does not inherit the v0.1 ten-minute broadcast stop.
+
+FQR2 remains experimental: this protocol description is not a throughput, range, universal-camera, sender-authentication, or production-readiness claim. Physical Windows/Android camera evidence is required before raising limits, making FQR2 the default, or publishing performance claims.
