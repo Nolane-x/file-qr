@@ -34,6 +34,18 @@ function makeAdapter(events = []) {
   };
 }
 
+function installFakeNavigator(root) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { storage: { getDirectory: async () => root } },
+  });
+  return () => {
+    if (previous) Object.defineProperty(globalThis, 'navigator', previous);
+    else delete globalThis.navigator;
+  };
+}
+
 test('verified blocks may commit out of order at exact offsets', async () => {
   const events = [];
   const adapter = makeAdapter(events);
@@ -76,6 +88,53 @@ test('manifest mismatch and malformed persisted sidecar fail closed', async () =
   const bad = makeAdapter();
   bad.readMeta = async () => ({ schema: 1, manifest: manifest(), completed: [{ index: 9999, sha256: HASH1 }] });
   await assert.rejects(() => createOpticalBlockStore(manifest(), { adapter: bad }), /sidecar|block|persisted/i);
+});
+
+test('browser OPFS malformed sidecar JSON fails closed without deleting partial data', async () => {
+  const removed = [];
+  const dataKey = `fqr2_${manifest().streamId}.part`;
+  const metaKey = `fqr2_${manifest().streamId}.json`;
+  const root = {
+    async getFileHandle(key) {
+      if (key === metaKey) {
+        return { async getFile() { return { async text() { return '{"schema":'; } }; } };
+      }
+      if (key === dataKey) {
+        return { async getFile() { return { size: 4, async arrayBuffer() { return new Uint8Array([1,2,3,4]).buffer; } }; } };
+      }
+      throw new DOMException('missing', 'NotFoundError');
+    },
+    async removeEntry(key) { removed.push(key); },
+  };
+  const restoreNavigator = installFakeNavigator(root);
+  try {
+    await assert.rejects(() => createOpticalBlockStore(manifest()), /sidecar|JSON|persisted/i);
+    assert.deepEqual(removed, [], 'malformed metadata must never downgrade to orphan cleanup');
+  } finally {
+    restoreNavigator();
+  }
+});
+
+test('browser OPFS missing sidecar still removes orphan partial data', async () => {
+  const removed = [];
+  const dataKey = `fqr2_${manifest().streamId}.part`;
+  const metaKey = `fqr2_${manifest().streamId}.json`;
+  const root = {
+    async getFileHandle(key) {
+      if (key === metaKey) throw new DOMException('missing', 'NotFoundError');
+      if (key === dataKey) return { async getFile() { return { size: 4 }; } };
+      throw new DOMException('missing', 'NotFoundError');
+    },
+    async removeEntry(key) { removed.push(key); },
+  };
+  const restoreNavigator = installFakeNavigator(root);
+  try {
+    const store = await createOpticalBlockStore(manifest());
+    assert.equal(store.completedBlocks, 0);
+    assert.deepEqual(removed, [dataKey]);
+  } finally {
+    restoreNavigator();
+  }
 });
 
 test('finalize requires all logical blocks and exact file size', async () => {
