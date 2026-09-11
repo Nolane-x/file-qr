@@ -76,6 +76,41 @@ test('authoritative preparation fetches exact run artifacts and hashes only cont
   assert.doesNotMatch(json, /FileQR-Windows|FileQR-Android|artifact.*path|payload\.bin/i);
 });
 
+test('authoritative preparation rejects artifact identity drift during materialization', async () => {
+  const dir = tempRoot();
+  const workspace = path.join(dir, 'workspace');
+  let artifactListingCalls = 0;
+  const replacementArchiveSha = sha(Buffer.from('replacement-windows-artifact-archive'));
+  const driftingExecGh = (endpoint) => {
+    if (endpoint.endsWith('/artifacts')) {
+      artifactListingCalls += 1;
+      const replacement = artifactListingCalls > 1;
+      return JSON.stringify({ artifacts: [
+        {
+          id: replacement ? 99 : 10,
+          name: 'file-qr-windows',
+          digest: `sha256:${replacement ? replacementArchiveSha : WINDOWS_ARCHIVE_SHA}`,
+          expired: false,
+          workflow_run: { id: 123, head_sha: SHA },
+        },
+        { id: 11, name: 'file-qr-android', digest: `sha256:${ANDROID_ARCHIVE_SHA}`, expired: false, workflow_run: { id: 123, head_sha: SHA } },
+      ] });
+    }
+    return JSON.stringify({
+      id: 123, name: 'Native Builds', event: 'push', head_branch: 'main', head_sha: SHA,
+      status: 'completed', conclusion: 'success', repository: { full_name: 'Nolane-x/file-qr' },
+    });
+  };
+
+  await assert.rejects(() => prepareCeremony({
+    scenario: 'fqr2-windows-to-android', runId: 123,
+    payloadBytes: 1024, workspace, execGh: driftingExecGh, controlSha: SHA, artifactFetcher,
+    now: () => new Date('2026-09-10T12:00:00.000Z'),
+  }), /FQR_EVIDENCE_ARTIFACT_DRIFT/);
+  assert.equal(artifactListingCalls, 2);
+  assert.equal(fs.existsSync(workspace), false);
+});
+
 test('authoritative preparation rejects legacy operator-supplied binary paths', async () => {
   const dir = tempRoot();
   const windows = path.join(dir, 'stale.exe');
