@@ -20,6 +20,12 @@ async function readJson(response) {
   }
 }
 
+function cloudflareMessages(body) {
+  return Array.isArray(body?.errors)
+    ? body.errors.map((entry) => String(entry?.message || '')).filter(Boolean).join('; ')
+    : '';
+}
+
 async function allocateSession() {
   const response = await fetch(`${signalingOrigin}/v1/sessions`, { method: 'POST' });
   const body = await readJson(response);
@@ -38,6 +44,40 @@ async function requestTurn(code) {
   return { response, body: await readJson(response) };
 }
 
+async function verifyCallsTokenActive() {
+  const response = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+    method: 'GET',
+    headers: { authorization: `Bearer ${callsApiToken}` },
+  });
+  const body = await readJson(response);
+  const status = String(body?.result?.status || '');
+  if (!response.ok || body?.success !== true || status !== 'active') {
+    const messages = cloudflareMessages(body);
+    throw new Error(
+      `Cloudflare Calls API token is not active: HTTP ${response.status}`
+      + `${messages ? ` (${messages})` : ''}`,
+    );
+  }
+}
+
+async function probeCallsAccess() {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/calls/turn_keys`,
+    {
+      method: 'GET',
+      headers: { authorization: `Bearer ${callsApiToken}` },
+    },
+  );
+  const body = await readJson(response);
+  if (!response.ok || body?.success !== true) {
+    const messages = cloudflareMessages(body);
+    throw new Error(
+      'Cloudflare Calls API token is active but cannot access Realtime TURN for the configured account: '
+      + `HTTP ${response.status}${messages ? ` (${messages})` : ''}`,
+    );
+  }
+}
+
 async function deleteManagedTurnKey(uid) {
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/calls/turn_keys/${encodeURIComponent(uid)}`,
@@ -48,9 +88,7 @@ async function deleteManagedTurnKey(uid) {
   );
   const body = await readJson(response);
   if (!response.ok || body?.success !== true) {
-    const messages = Array.isArray(body?.errors)
-      ? body.errors.map((entry) => String(entry?.message || '')).filter(Boolean).join('; ')
-      : '';
+    const messages = cloudflareMessages(body);
     throw new Error(
       `Cloudflare TURN key rollback failed: HTTP ${response.status}${messages ? ` (${messages})` : ''}`,
     );
@@ -71,12 +109,10 @@ async function createManagedTurnKey() {
   );
   const body = await readJson(response);
   if (!response.ok || body?.success !== true) {
-    const messages = Array.isArray(body?.errors)
-      ? body.errors.map((entry) => String(entry?.message || '')).filter(Boolean).join('; ')
-      : '';
+    const messages = cloudflareMessages(body);
     throw new Error(
-      `Cloudflare TURN key creation failed: HTTP ${response.status}${messages ? ` (${messages})` : ''}. `
-      + 'CLOUDFLARE_CALLS_API_TOKEN must include Calls Write permission.',
+      'Cloudflare Calls API token can read Realtime TURN for the configured account but TURN key creation was denied: '
+      + `HTTP ${response.status}${messages ? ` (${messages})` : ''}`,
     );
   }
 
@@ -163,6 +199,8 @@ if (!accountId || !workerApiToken || !callsApiToken) {
   );
 }
 
+await verifyCallsTokenActive();
+await probeCallsAccess();
 const { uid, key } = await createManagedTurnKey();
 process.stdout.write(`::add-mask::${uid}\n`);
 process.stdout.write(`::add-mask::${key}\n`);
