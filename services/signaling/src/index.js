@@ -34,14 +34,17 @@ function turnConfigured(env) {
     && typeof env.TURN_KEY_API_TOKEN === 'string' && env.TURN_KEY_API_TOKEN.length > 0;
 }
 
-function turnCredentialTtlSeconds(env) {
+function turnCredentialTtlSeconds(env, maxTtlSeconds = 172800) {
   const configured = Number(env.TURN_CREDENTIAL_TTL_SECONDS || 3600);
-  if (!Number.isFinite(configured)) return 3600;
-  return Math.min(172800, Math.max(300, Math.floor(configured)));
+  const configuredTtl = Number.isFinite(configured)
+    ? Math.min(172800, Math.max(300, Math.floor(configured)))
+    : 3600;
+  if (!Number.isFinite(maxTtlSeconds)) return configuredTtl;
+  return Math.min(configuredTtl, Math.max(1, Math.floor(maxTtlSeconds)));
 }
 
-async function generateTurnCredentials(env) {
-  const ttl = turnCredentialTtlSeconds(env);
+async function generateTurnCredentials(env, maxTtlSeconds) {
+  const ttl = turnCredentialTtlSeconds(env, maxTtlSeconds);
   const response = await fetch(
     `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`,
     {
@@ -76,7 +79,7 @@ export default {
         // SHA-256 in the route module keeps the live capability opaque inside the limiter key.
         compactCodeImpl: (code) => compactReceiveCode(code),
         rateLimitBinding: env.TURN_CREDENTIAL_RATE_LIMIT,
-        generateTurnCredentialsImpl: () => generateTurnCredentials(env),
+        generateTurnCredentialsImpl: (maxTtlSeconds) => generateTurnCredentials(env, maxTtlSeconds),
       });
     }
 
