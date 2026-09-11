@@ -56,8 +56,10 @@ The controller performs the following fail-closed chain for each platform:
 3. downloads the artifact archive by exact GitHub artifact ID;
 4. hashes the downloaded archive and requires exact equality with GitHub's `artifactDigest`;
 5. downloads/extracts the same unique run artifact into a controller-owned directory;
-6. requires exactly one canonical non-empty regular installable;
-7. independently hashes that installable and binds the binary SHA-256 into `preparation.json`.
+6. immediately re-resolves the authoritative run + both artifact identities and requires exact equality with the originally admitted run/head and artifact ID/name/digest tuples;
+7. aborts and removes the incomplete workspace if any run/artifact identity changed during materialization;
+8. requires exactly one canonical non-empty regular installable;
+9. independently hashes that installable and binds the binary SHA-256 into `preparation.json`.
 
 Canonical controlled binaries are:
 
@@ -73,7 +75,7 @@ The workspace also contains:
 <workspace>/preparation.json
 ```
 
-The preparation JSON records no local paths. The temporary downloaded archive used for digest verification is removed after controlled extraction. If fetching, digest verification, layout validation, or preparation fails, the incomplete workspace is removed.
+The preparation JSON records no local paths. The temporary downloaded archive used for digest verification is removed after controlled extraction. If fetching, digest verification, identity revalidation, layout validation, or preparation fails, the incomplete workspace is removed.
 
 Payload policy is 1..64 MiB for FQR2 and 1..8 MiB for FQR1. For `fqr2-large-file`, choose a value strictly greater than 8 MiB, for example `8388609`.
 
@@ -95,7 +97,7 @@ When Windows is involved, use:
 <workspace>/artifacts/windows/FileQR-Windows-x64-setup.exe
 ```
 
-The GitHub artifact archive digest and extracted binary SHA-256 are intentionally separate evidence facts; they identify different byte objects.
+The GitHub artifact archive digest and extracted binary SHA-256 are intentionally separate evidence facts; they identify different byte objects. The post-materialization identity recheck protects the multi-request window between admitting the run/artifact metadata and materializing the controlled files.
 
 ## 3. Collect sanitized platform facts
 
@@ -251,6 +253,7 @@ A complete matrix returns `matrixComplete: true`. An incomplete but internally v
 - `FQR_EVIDENCE_ARTIFACT_FETCH`: GitHub artifact retrieval failed/unavailable, or a retired external binary path was supplied.
 - `FQR_EVIDENCE_ARTIFACT_BYTES`: downloaded artifact archive bytes do not match GitHub's recorded SHA-256 digest.
 - `FQR_EVIDENCE_ARTIFACT_LAYOUT`: controlled extraction is not exactly the expected canonical installable.
+- `FQR_EVIDENCE_ARTIFACT_DRIFT`: the authoritative run/head or either platform artifact ID/name/digest changed while the binaries were being materialized.
 
 These conditions are authority failures, not warnings; start a new ceremony only after the underlying problem is corrected.
 
