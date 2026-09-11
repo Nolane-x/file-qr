@@ -6,6 +6,10 @@ function safePart(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 72);
 }
 
+function isNotFoundError(error) {
+  return error?.name === 'NotFoundError';
+}
+
 export function partialStorageKey(leaseCode, fileId) {
   const lease = safePart(leaseCode);
   const file = safePart(fileId);
@@ -82,16 +86,28 @@ export function createMemorySink(meta, limitOrOptions = DEFAULT_MEMORY_LIMIT) {
 }
 
 async function removeEntry(root, name) {
-  try { await root.removeEntry(name); } catch { /* already gone */ }
+  try {
+    await root.removeEntry(name);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
 }
 
 async function readPartialMeta(root, name) {
+  let handle;
   try {
-    const handle = await root.getFileHandle(name);
-    const file = await handle.getFile();
-    return JSON.parse(await file.text());
+    handle = await root.getFileHandle(name);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+
+  const file = await handle.getFile();
+  const text = await file.text();
+  try {
+    return JSON.parse(text);
   } catch {
-    return null;
+    throw new Error('Invalid resumable OPFS metadata JSON');
   }
 }
 
@@ -102,8 +118,8 @@ async function writePartialMeta(root, name, meta) {
   await writable.close();
 }
 
-async function createOpfsSink(meta, options = {}) {
-  const root = await navigator.storage.getDirectory();
+async function createOpfsSink(meta, options = {}, providedRoot = null) {
+  const root = providedRoot || await navigator.storage.getDirectory();
   const key = options.key || partialStorageKey(options.leaseCode, meta.fileId || options.fileId);
   const partName = `${key}.part`;
   const metaName = `${key}.json`;
@@ -131,7 +147,8 @@ async function createOpfsSink(meta, options = {}) {
         handle = null;
         savedMeta = null;
       }
-    } catch {
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
       handle = null;
       savedMeta = null;
     }
@@ -199,7 +216,13 @@ export async function createReceiveSink(meta, options = {}) {
       : null
   );
   if (typeof navigator !== 'undefined' && navigator.storage?.getDirectory && key) {
-    try { return await createOpfsSink(meta, { ...options, key }); } catch { /* fall back to memory */ }
+    let root;
+    try {
+      root = await navigator.storage.getDirectory();
+    } catch {
+      return createMemorySink(meta, { limit: options.limit ?? DEFAULT_MEMORY_LIMIT, key });
+    }
+    return createOpfsSink(meta, { ...options, key }, root);
   }
   return createMemorySink(meta, { limit: options.limit ?? DEFAULT_MEMORY_LIMIT, key });
 }
