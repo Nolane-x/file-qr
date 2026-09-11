@@ -116,21 +116,25 @@ Relay mode must not send plaintext file chunks to the Durable Object.
 
 For QR-based joins, the sender generates a fresh 256-bit relay secret for the session and includes it in the structured receive payload carried by the QR code. The Worker receives the normal room identifier but never receives this relay secret as configuration or stored session metadata.
 
-Both clients derive per-attempt relay keys from that secret using HKDF with an attempt-bound context. Relay frames are encrypted with an AEAD construction available through Web Crypto, using unique nonces derived from a per-attempt random nonce prefix plus a monotonic frame sequence number.
+Both clients use Web Crypto only. For each `attemptId`, they derive two independent 256-bit traffic keys from the relay secret with HKDF-SHA-256: one for sender-to-receiver frames and one for receiver-to-sender frames. The HKDF `info` value binds protocol version, compact receive code, `attemptId`, and traffic direction. Each direction uses AES-256-GCM.
+
+Each traffic direction generates a fresh 64-bit random nonce prefix when the relay socket is established. The AES-GCM 96-bit nonce is `noncePrefix || uint32(sequence)`. Sequence starts at zero, increments exactly once for every encrypted frame, and the connection aborts before sequence wrap. Because directions use distinct traffic keys and each new attempt derives fresh keys, nonce reuse across role, reconnect, and attempt boundaries is prohibited by construction.
+
+Authenticated additional data contains protocol version, compact receive code, `attemptId`, traffic direction, frame kind, sequence, and declared plaintext length.
 
 Required properties:
 
-- a fresh relay secret per sender lease;
-- a distinct derived key per `attemptId`;
-- sequence number included in authenticated data;
-- role/direction included in authenticated data;
-- attempt identity included in authenticated data;
-- nonce reuse is impossible within a key;
+- a fresh 256-bit relay secret per sender lease;
+- two distinct derived AES-256-GCM traffic keys per `attemptId`;
+- HKDF-SHA-256 context binds room, attempt, version, and direction;
+- unique 96-bit nonce for every encrypted frame under one traffic key;
+- sequence, role/direction, kind, length, and attempt identity are authenticated;
 - authentication failure aborts the attempt fail-closed;
+- replayed or non-monotonic sequence aborts the relay attempt;
 - the Worker forwards ciphertext and minimal routing metadata only;
 - relay secret/key material is never logged, stored in Durable Object storage, uploaded as CI evidence, or written to repository configuration.
 
-The human receive-code-only path cannot claim the same server-blind confidentiality because the code is already visible to the rendezvous service. Therefore automatic encrypted relay fallback is enabled only when the receiver joined with a structured payload containing the relay secret. A code-only receiver that exhausts direct WebRTC must be asked to scan the sender QR (or use a future explicit relay recovery mechanism) rather than silently downgrade confidentiality.
+The human receive-code-only path cannot claim the same server-blind confidentiality because the code is already visible to the rendezvous service. Therefore automatic encrypted relay fallback is enabled only when the receiver joined with a structured payload containing the relay secret. A code-only receiver that exhausts direct WebRTC must be asked to scan the sender QR rather than silently downgrade confidentiality. A separate human-entered relay recovery secret is intentionally outside the first implementation.
 
 This distinction must be visible in tests and documentation. The implementation must never label TLS-only Worker forwarding as end-to-end encrypted relay.
 
@@ -146,30 +150,35 @@ attemptId
 sequence
 kind            # data | control | ack | abort
 plaintextLength
+noncePrefix     # carried during relay handshake, not repeated in every data frame
 ciphertext
 ```
 
 The authenticated plaintext payload for `data` contains the existing transfer bytes. Control frames represent only transport-local events such as relay-ready, flow-control acknowledgement, resume boundary, and relay abort. Existing file-transfer completion and resume semantics remain owned by the transfer layer above.
 
-A frame exceeding the configured relay frame ceiling is rejected before forwarding. Initial implementation should keep plaintext data chunks at or below the existing 64 KiB transfer chunk size so transport switching does not introduce a second chunking regime.
+Plaintext `data` payloads are capped at the existing 64 KiB transfer chunk size. The entire encoded relay frame, including metadata and AES-GCM tag, is capped at 70 KiB. A larger frame is rejected before forwarding. This keeps relay framing comfortably below platform WebSocket message ceilings and prevents a second data-chunk regime.
 
 ## Backpressure and bounded resource use
 
 The relay must be safe under a slow receiver, disconnected peer, malicious client, or stalled browser.
 
-Mandatory controls:
+The first implementation uses these hard defaults:
 
-- sender may not maintain an unbounded queued byte backlog in the Durable Object;
-- the room forwards frames only when the opposite relay socket is currently attached;
-- application-level acknowledgements maintain a bounded in-flight window;
-- sender pauses when the window is full and resumes only after acknowledgement;
-- each frame has a maximum size;
-- each attempt has a maximum relay byte budget derived from the announced file size plus bounded protocol overhead;
-- a per-session relay byte ceiling prevents repeated-attempt abuse within one lease;
-- idle relay sockets time out before or at session expiry;
-- malformed frame count and protocol-violation count are bounded and cause fail-closed termination;
-- no file payload is written to Durable Object storage;
-- only small counters/capability state required for admission and abuse control may be stored.
+- maximum plaintext data chunk: 64 KiB;
+- maximum encoded relay frame: 70 KiB;
+- maximum unacknowledged data frames per direction: 8;
+- therefore maximum application data intentionally in flight per direction: 512 KiB;
+- receiver sends cumulative acknowledgement at least every 4 data frames and at least once every 250 ms while data is flowing;
+- sender pauses at 8 unacknowledged frames and resumes only after cumulative acknowledgement reduces the window;
+- relay socket idle timeout: 30 seconds without valid protocol progress, always bounded by lease expiry;
+- protocol-violation threshold: first cryptographic/authentication/replay violation aborts immediately; structural malformed-frame violations abort after 3 within an attempt;
+- maximum relay attempts per sender lease: 4; direct WebRTC attempts are unaffected;
+- per-attempt forwarded ciphertext budget: declared remaining file bytes plus the greater of 1 MiB or 2% protocol overhead, with control/ack frames separately capped to 4 MiB total;
+- a resumed attempt computes its data budget from the validated remaining byte count, not original file size.
+
+The room forwards a valid frame only when the opposite relay socket for the same current attempt is attached. It does not retain file frames for later delivery and does not implement retransmission storage. Sender-side backpressure/retry logic owns unacknowledged chunks.
+
+No file payload, ciphertext history, retransmission buffer, or relay secret may be written to Durable Object storage. Only small session/attempt admission state, counters, nonce-prefix registration, and abuse-control metadata may be persisted.
 
 The Worker must never buffer an entire file or a large retransmission history.
 
@@ -180,10 +189,11 @@ File QR's existing resume offset remains authoritative. Relay mode does not inve
 If a relay attempt disconnects:
 
 1. the receiver keeps already committed bytes through the existing receive sink;
-2. a new receiver attempt receives a new `attemptId` and therefore a new derived relay key;
+2. a new receiver attempt receives a new `attemptId` and therefore new derived traffic keys;
 3. the receiver communicates its validated resume offset through the existing transfer protocol;
 4. the sender restarts from that offset;
-5. sequence numbers restart at zero because the encryption key is attempt-specific.
+5. sequence numbers and nonce prefixes restart because the encryption keys are attempt-specific;
+6. the new attempt receives a fresh per-attempt forwarding budget based on remaining bytes.
 
 A stale relay socket from the previous attempt cannot append bytes to the new attempt.
 
@@ -270,10 +280,12 @@ Tests must prove at minimum:
 - relay admission rejects expired session, wrong role, wrong attempt, stale capability, duplicate role socket, and missing capability;
 - signaling parser never accepts relay binary frames;
 - frame parser rejects oversize, malformed version, invalid sequence, wrong attempt, and invalid kind;
-- crypto round trip succeeds for two clients sharing the QR relay secret;
-- wrong secret, wrong attempt, modified metadata, modified ciphertext, replayed sequence, and nonce misuse paths fail closed;
-- bounded in-flight window applies backpressure and cannot grow without acknowledgements;
-- no file payload is persisted to room storage;
+- HKDF/AES-GCM round trip succeeds for two clients sharing the QR relay secret;
+- wrong secret, wrong attempt, modified metadata, modified ciphertext, replayed sequence, non-monotonic sequence, and nonce misuse paths fail closed;
+- bounded 8-frame in-flight window applies backpressure and cannot grow without acknowledgements;
+- 64 KiB plaintext and 70 KiB encoded frame ceilings are enforced;
+- idle timeout, malformed-frame threshold, four-relay-attempt ceiling, and per-attempt byte budget fail closed;
+- no file payload or ciphertext history is persisted to room storage;
 - code-only join cannot silently enter the encrypted relay path;
 - direct transport remains the default preference;
 - fallback occurs only after direct exhaustion;
@@ -350,9 +362,9 @@ This design is complete only when implementation evidence demonstrates all of th
 
 - direct WebRTC behavior remains available and preferred;
 - File QR can complete a transfer through `worker-relay` with exact payload integrity when direct connectivity is unavailable;
-- QR-secured relay file bytes are encrypted end to end before Worker forwarding;
+- QR-secured relay file bytes are encrypted end to end before Worker forwarding with HKDF-SHA-256 + AES-256-GCM and unique nonces;
 - relay admission is session/attempt scoped and cannot be used as an open generic relay;
-- buffering and byte usage are bounded;
+- buffering and byte usage obey the fixed bounded-window/frame/attempt limits above;
 - resume remains correct across relay attempt interruption;
 - hosted relay proof is green on the production deployment;
 - real restrictive-network evidence is separately recorded;
