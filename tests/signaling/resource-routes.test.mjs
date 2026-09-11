@@ -211,7 +211,7 @@ test('TURN provider minting is bound to the exact authorized lease expiry', asyn
   assert.deepEqual(providerOptions, { leaseExpiresAt: authorizationExpiresAt });
 });
 
-test('TURN credential TTL clamp never exceeds the live lease and refuses sub-minimum remainder', async () => {
+test('TURN credential TTL clamp never exceeds the live lease and stays usable late in the lease', async () => {
   const routes = await loadRoutes();
   assert.equal(typeof routes.clampTurnCredentialTtlSeconds, 'function', 'resource routes must export a pure TURN TTL clamp');
 
@@ -219,6 +219,7 @@ test('TURN credential TTL clamp never exceeds the live lease and refuses sub-min
   assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 600_000, now), 600);
   assert.equal(routes.clampTurnCredentialTtlSeconds(300, now + 600_000, now), 300);
   assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 301_999, now), 301);
-  assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 299_999, now), 0);
+  assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 120_500, now), 120);
+  assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 999, now), 0);
   assert.equal(routes.clampTurnCredentialTtlSeconds(Number.NaN, now + 600_000, now), 600);
 });
