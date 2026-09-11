@@ -70,35 +70,29 @@ test('TURN bootstrap rolls back Worker secrets and the newly-created Calls key w
   assert.match(script, /rollback/i);
 });
 
-test('TURN bootstrap diagnoses Calls token validity before mutating Cloudflare', () => {
+test('TURN bootstrap verifies each Calls token kind with the matching Cloudflare verifier', () => {
   assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
   const script = fs.readFileSync(bootstrapUrl, 'utf8');
 
+  assert.match(script, /callsApiToken\.startsWith\(['"]cfat_['"]\)/);
   assert.match(script, /\/user\/tokens\/verify/);
-  assert.match(script, /status\s*!==\s*['"]active['"]/);
-  assert.match(script, /Cloudflare Calls API token is not active/);
-});
-
-test('TURN bootstrap verifies the Calls token against the configured account before Realtime access', () => {
-  assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
-  const script = fs.readFileSync(bootstrapUrl, 'utf8');
-
-  assert.match(script, /async function verifyCallsTokenForAccount/);
   assert.match(script, /accounts\/\$\{encodeURIComponent\(accountId\)\}\/tokens\/verify/);
-  assert.match(script, /Cloudflare Calls API token is active but is not valid for the configured account/);
-  assert.match(
-    script,
-    /await\s+verifyCallsTokenActive\(\);[\s\S]*await\s+verifyCallsTokenForAccount\(\);[\s\S]*await\s+probeCallsAccess\(\);/,
-  );
+  assert.match(script, /const\s+verifyUrl\s*=\s*isAccountToken/);
+  assert.match(script, /status\s*!==\s*['"]active['"]/);
+  assert.doesNotMatch(script, /await\s+verifyCallsTokenForAccount\(\)/);
 });
 
-test('TURN bootstrap distinguishes account visibility from Calls write authorization', () => {
+test('TURN bootstrap distinguishes Realtime read access from Calls write authorization', () => {
   assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
   const script = fs.readFileSync(bootstrapUrl, 'utf8');
 
   assert.match(script, /async function probeCallsAccess/);
   assert.match(script, /method:\s*['"]GET['"]/);
   assert.match(script, /accounts\/\$\{encodeURIComponent\(accountId\)\}\/calls\/turn_keys/);
-  assert.match(script, /token is active but cannot access Realtime TURN for the configured account/);
-  assert.match(script, /token can read Realtime TURN for the configured account but TURN key creation was denied/);
+  assert.match(script, /cannot access Realtime TURN for the configured account/);
+  assert.match(script, /can read Realtime TURN for the configured account but TURN key creation was denied/);
+  assert.match(
+    script,
+    /await\s+verifyCallsTokenActive\(\);[\s\S]*await\s+probeCallsAccess\(\);[\s\S]*createManagedTurnKey\(\)/,
+  );
 });
