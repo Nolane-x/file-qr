@@ -79,6 +79,19 @@ test('TURN bootstrap diagnoses Calls token validity before mutating Cloudflare',
   assert.match(script, /Cloudflare Calls API token is not active/);
 });
 
+test('TURN bootstrap verifies the Calls token against the configured account before Realtime access', () => {
+  assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
+  const script = fs.readFileSync(bootstrapUrl, 'utf8');
+
+  assert.match(script, /async function verifyCallsTokenForAccount/);
+  assert.match(script, /accounts\/\$\{encodeURIComponent\(accountId\)\}\/tokens\/verify/);
+  assert.match(script, /Cloudflare Calls API token is active but is not valid for the configured account/);
+  assert.match(
+    script,
+    /await\s+verifyCallsTokenActive\(\);[\s\S]*await\s+verifyCallsTokenForAccount\(\);[\s\S]*await\s+probeCallsAccess\(\);/,
+  );
+});
+
 test('TURN bootstrap distinguishes account visibility from Calls write authorization', () => {
   assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
   const script = fs.readFileSync(bootstrapUrl, 'utf8');
