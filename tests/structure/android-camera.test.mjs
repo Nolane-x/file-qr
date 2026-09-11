@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { patchManifestText } from '../../scripts/patch-android-manifest.mjs';
 
-test('Android manifest patch adds camera permission and optional camera feature exactly once', () => {
-  const input = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET" />\n</manifest>\n';
+test('Android manifest patch forces camera hardware optional through library manifest merge', () => {
+  const input = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-feature android:name="android.hardware.camera.any" />\n</manifest>\n';
   const once = patchManifestText(input);
+  assert.ok(once.includes('xmlns:tools="http://schemas.android.com/tools"'));
   assert.ok(once.includes('<uses-permission android:name="android.permission.CAMERA" />'));
-  assert.ok(once.includes('<uses-feature android:name="android.hardware.camera.any" android:required="false" />'));
+  assert.ok(once.includes('<uses-feature android:name="android.hardware.camera.any" android:required="false" tools:replace="android:required" />'));
+  assert.equal((once.match(/android\.hardware\.camera\.any/g) || []).length, 1);
   assert.equal(patchManifestText(once), once);
 });
 
