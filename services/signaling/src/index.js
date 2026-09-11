@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { compactReceiveCode, createReceiveCode, isReceiveCode, SESSION_TTL_MS } from '../../../packages/core/session.js';
-import { handleSessionAllocation, handleTurnCredentials } from './resource-routes.js';
+import { clampTurnCredentialTtlSeconds, handleSessionAllocation, handleTurnCredentials } from './resource-routes.js';
+import { parseClientSignalingMessage } from './signaling-message.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -34,14 +35,10 @@ function turnConfigured(env) {
     && typeof env.TURN_KEY_API_TOKEN === 'string' && env.TURN_KEY_API_TOKEN.length > 0;
 }
 
-function turnCredentialTtlSeconds(env) {
-  const configured = Number(env.TURN_CREDENTIAL_TTL_SECONDS || 3600);
-  if (!Number.isFinite(configured)) return 3600;
-  return Math.min(172800, Math.max(300, Math.floor(configured)));
-}
-
-async function generateTurnCredentials(env) {
-  const ttl = turnCredentialTtlSeconds(env);
+async function generateTurnCredentials(env, { leaseExpiresAt } = {}) {
+  const now = Date.now();
+  const ttl = clampTurnCredentialTtlSeconds(env.TURN_CREDENTIAL_TTL_SECONDS || 3600, leaseExpiresAt, now);
+  if (ttl <= 0) return null;
   const response = await fetch(
     `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`,
     {
@@ -56,7 +53,7 @@ async function generateTurnCredentials(env) {
   if (!response.ok) return null;
   const body = await response.json();
   if (!Array.isArray(body?.iceServers) || body.iceServers.length === 0) return null;
-  return { iceServers: body.iceServers, expiresAt: Date.now() + ttl * 1000 };
+  return { iceServers: body.iceServers, expiresAt: now + ttl * 1000 };
 }
 
 export default {
@@ -76,7 +73,7 @@ export default {
         // SHA-256 in the route module keeps the live capability opaque inside the limiter key.
         compactCodeImpl: (code) => compactReceiveCode(code),
         rateLimitBinding: env.TURN_CREDENTIAL_RATE_LIMIT,
-        generateTurnCredentialsImpl: () => generateTurnCredentials(env),
+        generateTurnCredentialsImpl: (options) => generateTurnCredentials(env, options),
       });
     }
 
@@ -204,13 +201,8 @@ export class SessionRoom extends DurableObject {
   }
 
   async webSocketMessage(ws, message) {
-    if (typeof message !== 'string') return;
-    let payload;
-    try {
-      payload = JSON.parse(message);
-    } catch {
-      return;
-    }
+    const payload = parseClientSignalingMessage(message);
+    if (!payload) return;
 
     const attachment = ws.deserializeAttachment?.() || {};
     const role = attachment.role;
@@ -219,8 +211,8 @@ export class SessionRoom extends DurableObject {
     let session = await this.ctx.storage.get('session');
     if (!session) return;
 
-    if (payload?.type === 'attempt-ready' && role === 'receiver') {
-      if (!Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId || attachment.attemptId !== session.activeAttemptId) return;
+    if (payload.type === 'attempt-ready' && role === 'receiver') {
+      if (payload.attemptId !== session.activeAttemptId || attachment.attemptId !== session.activeAttemptId) return;
       session = { ...session, readyAttemptId: session.activeAttemptId };
       await this.ctx.storage.put('session', session);
       if (this.ctx.getWebSockets('sender').length) {
@@ -229,8 +221,7 @@ export class SessionRoom extends DurableObject {
       return;
     }
 
-    if (!['description', 'candidate'].includes(payload?.type)) return;
-    if (!Number.isInteger(payload.attemptId) || payload.attemptId !== session.activeAttemptId) return;
+    if (payload.attemptId !== session.activeAttemptId) return;
     if (role === 'receiver' && attachment.attemptId !== session.activeAttemptId) return;
 
     const target = role === 'sender' ? 'receiver' : 'sender';
