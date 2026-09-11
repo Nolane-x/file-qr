@@ -46,7 +46,7 @@ test('TURN credential minting rate-limits only after live-lease authorization an
   const configured = route.indexOf('turnConfigured(env)');
   const authorize = route.indexOf('turn-authorize');
   const limiter = route.indexOf('TURN_CREDENTIAL_RATE_LIMIT');
-  const provider = route.indexOf('generateTurnCredentials(env)');
+  const provider = route.indexOf('generateTurnCredentials(env, options)');
 
   assert.ok(configured >= 0 && authorize > configured, 'TURN configuration and lease authorization must remain first');
   assert.ok(limiter > authorize, 'TURN limiter must run only after live-lease authorization');
