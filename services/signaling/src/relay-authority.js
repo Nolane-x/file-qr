@@ -28,6 +28,17 @@ export async function issueRelayCapability(fillRandom = (bytes) => crypto.getRan
   return { capability, capabilityHash: await hashRelayCapability(capability) };
 }
 
+export async function deriveSenderRelayCapability(senderToken, attemptId) {
+  if (typeof senderToken !== 'string' || senderToken.length < 16) throw new Error('Invalid sender authority');
+  if (!Number.isSafeInteger(attemptId) || attemptId <= 0) throw new Error('Invalid relay attempt id');
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`file-qr-relay-sender-v1|${attemptId}|${senderToken}`),
+  );
+  const capability = toBase64Url(new Uint8Array(digest));
+  return { capability, capabilityHash: await hashRelayCapability(capability) };
+}
+
 export function createRelayCapabilityState(attemptId, senderHash, receiverHash) {
   if (!Number.isSafeInteger(attemptId) || attemptId <= 0) throw new Error('Invalid relay attempt id');
   if (!HASH_PATTERN.test(senderHash) || !HASH_PATTERN.test(receiverHash)) throw new Error('Invalid relay capability hash');
@@ -44,14 +55,12 @@ export function validateRelayAdmission(session, { role, attemptId, capabilityHas
   if (!Number.isSafeInteger(attemptId) || attemptId <= 0 || attemptId !== session.activeAttemptId) {
     return deny(409, 'stale-relay-attempt');
   }
-
   const state = session.relayCapabilities;
   if (!state || state.attemptId !== attemptId) return deny(409, 'relay-capability-unavailable');
   const expected = role === 'sender' ? state.senderHash : state.receiverHash;
   if (!HASH_PATTERN.test(String(capabilityHash || '')) || capabilityHash !== expected) {
     return deny(403, 'invalid-relay-capability');
   }
-
   const count = Number.isSafeInteger(session.relayAttemptCount) && session.relayAttemptCount >= 0
     ? session.relayAttemptCount
     : 0;

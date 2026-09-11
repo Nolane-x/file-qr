@@ -4,11 +4,8 @@ import assert from 'node:assert/strict';
 const moduleUrl = new URL('../../services/signaling/src/relay-authority.js', import.meta.url);
 
 async function load() {
-  try {
-    return await import(moduleUrl);
-  } catch (error) {
-    assert.fail(`relay-authority.js must exist: ${error?.message || error}`);
-  }
+  try { return await import(moduleUrl); }
+  catch (error) { assert.fail(`relay-authority.js must exist: ${error?.message || error}`); }
 }
 
 test('relay capabilities are high entropy and persisted only as hashes', async () => {
@@ -29,13 +26,7 @@ test('relay capabilities are high entropy and persisted only as hashes', async (
 test('relay admission requires live exact attempt role and matching capability hash', async () => {
   const { validateRelayAdmission } = await load();
   const now = 1_800_000_000_000;
-  const session = {
-    expiresAt: now + 60_000,
-    activeAttemptId: 4,
-    relayAttemptCount: 1,
-    relayStartedAttemptId: 4,
-    relayCapabilities: { attemptId: 4, senderHash: 'a'.repeat(64), receiverHash: 'b'.repeat(64) },
-  };
+  const session = { expiresAt: now + 60_000, activeAttemptId: 4, relayAttemptCount: 1, relayStartedAttemptId: 4, relayCapabilities: { attemptId: 4, senderHash: 'a'.repeat(64), receiverHash: 'b'.repeat(64) } };
   assert.deepEqual(validateRelayAdmission(session, { role: 'sender', attemptId: 4, capabilityHash: 'a'.repeat(64), now }), { ok: true, status: 200, error: null });
   assert.equal(validateRelayAdmission(session, { role: 'receiver', attemptId: 4, capabilityHash: 'b'.repeat(64), now }).ok, true);
   assert.deepEqual(validateRelayAdmission(session, { role: 'viewer', attemptId: 4, capabilityHash: 'a'.repeat(64), now }), { ok: false, status: 400, error: 'invalid-relay-role' });
@@ -60,4 +51,15 @@ test('a fifth distinct relay attempt in one lease is denied without blocking the
   assert.deepEqual(validateRelayAdmission(session, { role: 'sender', attemptId: 9, capabilityHash: 'a'.repeat(64), now }), { ok: false, status: 429, error: 'relay-attempt-limit' });
   const already = { ...session, relayStartedAttemptId: 9 };
   assert.equal(validateRelayAdmission(already, { role: 'sender', attemptId: 9, capabilityHash: 'a'.repeat(64), now }).ok, true);
+});
+
+test('sender relay capability is deterministically derived from sender authority and attempt without storage', async () => {
+  const { deriveSenderRelayCapability } = await load();
+  const one = await deriveSenderRelayCapability('sender-token-secret', 3);
+  const again = await deriveSenderRelayCapability('sender-token-secret', 3);
+  const next = await deriveSenderRelayCapability('sender-token-secret', 4);
+  assert.match(one.capability, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(one.capabilityHash, /^[0-9a-f]{64}$/);
+  assert.equal(one.capability, again.capability);
+  assert.notEqual(one.capability, next.capability);
 });
