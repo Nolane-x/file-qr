@@ -44,10 +44,15 @@ function sessionEnv(limitResult) {
   };
 }
 
-function turnEnv({ authorizationStatus = 200, limitResult = { success: false } } = {}) {
+function turnEnv({
+  authorizationStatus = 200,
+  authorizationExpiresAt = Date.now() + 600_000,
+  limitResult = { success: false },
+} = {}) {
   const state = { authorizationCalls: 0, limiterCalls: 0, limiterKey: '', providerCalls: 0 };
   return {
     state,
+    authorizationExpiresAt,
     env: {
       TURN_KEY_ID: 'test-turn-key',
       TURN_KEY_API_TOKEN: 'test-turn-api-token',
@@ -65,7 +70,10 @@ function turnEnv({ authorizationStatus = 200, limitResult = { success: false } }
           return {
             async fetch() {
               state.authorizationCalls += 1;
-              return new Response(JSON.stringify({ ok: authorizationStatus === 200 }), { status: authorizationStatus });
+              return new Response(JSON.stringify({
+                ok: authorizationStatus === 200,
+                ...(authorizationStatus === 200 ? { expiresAt: authorizationExpiresAt } : {}),
+              }), { status: authorizationStatus, headers: { 'content-type': 'application/json' } });
             },
           };
         },
@@ -180,4 +188,37 @@ test('TURN limiter unavailability fails closed after authorization and before pr
     assert.equal(state.authorizationCalls, 1);
     assert.equal(state.providerCalls, 0);
   }
+});
+
+test('TURN provider minting is bound to the exact authorized lease expiry', async () => {
+  const { handleTurnCredentials } = await loadRoutes();
+  const authorizationExpiresAt = Date.now() + 540_000;
+  const { env, state } = turnEnv({ authorizationExpiresAt, limitResult: { success: true } });
+  let providerOptions = null;
+
+  const response = await handleTurnCredentials(TURN_REQUEST(), env, {
+    async generateTurnCredentialsImpl(options) {
+      state.providerCalls += 1;
+      providerOptions = options;
+      return { iceServers: [{ urls: ['turn:example.invalid'] }], expiresAt: authorizationExpiresAt };
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(state.authorizationCalls, 1);
+  assert.equal(state.limiterCalls, 1);
+  assert.equal(state.providerCalls, 1);
+  assert.deepEqual(providerOptions, { leaseExpiresAt: authorizationExpiresAt });
+});
+
+test('TURN credential TTL clamp never exceeds the live lease and refuses sub-minimum remainder', async () => {
+  const routes = await loadRoutes();
+  assert.equal(typeof routes.clampTurnCredentialTtlSeconds, 'function', 'resource routes must export a pure TURN TTL clamp');
+
+  const now = 1_800_000_000_000;
+  assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 600_000, now), 600);
+  assert.equal(routes.clampTurnCredentialTtlSeconds(300, now + 600_000, now), 300);
+  assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 301_999, now), 301);
+  assert.equal(routes.clampTurnCredentialTtlSeconds(3600, now + 299_999, now), 0);
+  assert.equal(routes.clampTurnCredentialTtlSeconds(Number.NaN, now + 600_000, now), 600);
 });
