@@ -24,7 +24,7 @@ test('relay frame round-trips bounded authenticated metadata and opaque cipherte
   assert.equal(RELAY_MAX_PLAINTEXT_BYTES, 64 * 1024);
   assert.equal(RELAY_MAX_FRAME_BYTES, 70 * 1024);
 
-  const ciphertext = new Uint8Array([9, 8, 7, 6, 5]);
+  const ciphertext = Uint8Array.from({ length: 17 }, (_, index) => index + 1);
   const frame = encodeRelayFrame({
     attemptId: 7,
     sequence: 3,
