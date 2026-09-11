@@ -9,6 +9,16 @@ const meta = {
   type: 'application/octet-stream',
 };
 
+function namedError(name, message) {
+  const error = new Error(message);
+  error.name = name;
+  return error;
+}
+
+function notFound(message = 'not found') {
+  return namedError('NotFoundError', message);
+}
+
 function createFakeOpfs(initialEntries = {}) {
   const entries = new Map(
     Object.entries(initialEntries).map(([name, bytes]) => [name, Uint8Array.from(bytes)]),
@@ -18,7 +28,7 @@ function createFakeOpfs(initialEntries = {}) {
     return {
       async getFile() {
         const bytes = entries.get(name);
-        if (!bytes) throw new Error('not found');
+        if (!bytes) throw notFound();
         return new File([bytes], name, { type: 'application/octet-stream' });
       },
       async createWritable({ keepExistingData = false } = {}) {
@@ -54,13 +64,13 @@ function createFakeOpfs(initialEntries = {}) {
     entries,
     async getFileHandle(name, { create = false } = {}) {
       if (!entries.has(name)) {
-        if (!create) throw new Error('not found');
+        if (!create) throw notFound();
         entries.set(name, new Uint8Array());
       }
       return handleFor(name);
     },
     async removeEntry(name) {
-      if (!entries.delete(name)) throw new Error('not found');
+      if (!entries.delete(name)) throw notFound();
     },
   };
 }
@@ -168,4 +178,48 @@ test('OPFS checkpoints preserve resumable bytes across abrupt page termination',
   assert.equal(second.offset, checkpointBytes, 'a completed durability checkpoint must be visible to the next receiver runtime');
 
   await second.abort({ discard: true });
+});
+
+test('malformed OPFS partial metadata fails closed instead of silently resetting resumable state', async (t) => {
+  const leaseCode = 'ABCDE-FGHJK';
+  const corruptMeta = { ...meta, fileId: 'CORRUPT1' };
+  const key = partialStorageKey(leaseCode, corruptMeta.fileId);
+  const root = createFakeOpfs({
+    [`${key}.json`]: new TextEncoder().encode('{broken-json'),
+    [`${key}.part`]: Uint8Array.of(1, 2, 3),
+  });
+  installFakeStorage(t, root);
+
+  await assert.rejects(
+    () => createReceiveSink(corruptMeta, { leaseCode, fileId: corruptMeta.fileId }),
+    /metadata|json|persisted/i,
+  );
+  assert.deepEqual([...root.entries.get(`${key}.part`)], [1, 2, 3], 'corrupt metadata must not authorize destructive reset');
+});
+
+test('OPFS access errors fail closed instead of downgrading to memory fallback', async (t) => {
+  const leaseCode = 'ABCDE-FGHJK';
+  const deniedMeta = { ...meta, fileId: 'DENIED01' };
+  const denied = namedError('SecurityError', 'opfs access denied');
+  installFakeStorage(t, {
+    async getFileHandle() { throw denied; },
+    async removeEntry() { throw denied; },
+  });
+
+  await assert.rejects(
+    () => createReceiveSink(deniedMeta, { leaseCode, fileId: deniedMeta.fileId }),
+    /opfs access denied/i,
+  );
+});
+
+test('OPFS cleanup propagates delete failures instead of reporting successful cleanup', async (t) => {
+  const leaseCode = 'ABCDE-FGHJK';
+  const cleanupMeta = { ...meta, fileId: 'CLEANUP1' };
+  const root = createFakeOpfs();
+  installFakeStorage(t, root);
+
+  const sink = await createReceiveSink(cleanupMeta, { leaseCode, fileId: cleanupMeta.fileId });
+  root.removeEntry = async () => { throw namedError('NoModificationAllowedError', 'delete denied'); };
+
+  await assert.rejects(() => sink.cleanup(), /delete denied/i);
 });
