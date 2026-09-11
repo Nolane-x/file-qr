@@ -13,6 +13,8 @@ Those were individually valid facts, but the implementation did not machine-prov
 
 That is too weak for Issue #50's central provenance question: the physical ceremony must exercise the exact binaries produced by one exact integrated Native Builds lineage.
 
+A later adversarial pass found a second, narrower authority race: the hardened implementation verified an archive fetched by exact artifact ID, then materialized the unique artifact using the run ID + artifact name. Without a post-materialization identity check, the admitted artifact set could theoretically change between those network operations, allowing preparation to combine metadata admitted before the change with materialized bytes selected afterward.
+
 ## Amended authoritative preparation contract
 
 Authoritative v1 preparation no longer accepts operator-supplied Windows or Android binary paths.
@@ -25,14 +27,16 @@ For each platform, trusted control code must:
 4. download the selected artifact archive by its exact GitHub artifact ID using authenticated GitHub CLI/API access;
 5. SHA-256 hash the downloaded archive bytes and require exact equality with GitHub's recorded `artifactDigest`;
 6. extract/download the same unique run artifact into a fresh controller-owned workspace directory, rather than accepting an arbitrary external binary path;
-7. require an exact canonical one-file artifact layout:
+7. immediately re-resolve the authoritative Native Builds run/artifact set after each platform materialization and require exact equality with the originally admitted run/head plus both artifact ID/name/digest tuples;
+8. fail closed if that identity changes during preparation;
+9. require an exact canonical one-file artifact layout:
    - Windows: `FileQR-Windows-x64-setup.exe`
    - Android: `FileQR-Android-arm64.apk`
-8. reject missing, empty, extra, nested, symlinked, or wrongly named extracted entries;
-9. independently SHA-256 hash only that controlled canonical binary;
-10. bind the resulting binary SHA-256 into the immutable preparation manifest together with the existing artifact ID/name/digest and run/head identity.
+10. reject missing, empty, extra, nested, symlinked, or wrongly named extracted entries;
+11. independently SHA-256 hash only that controlled canonical binary;
+12. bind the resulting binary SHA-256 into the immutable preparation manifest together with the existing artifact ID/name/digest and run/head identity.
 
-Any archive digest mismatch, download failure, unexpected layout, or legacy operator-supplied binary path fails closed and removes the incomplete ceremony workspace.
+Any archive digest mismatch, artifact-identity drift, download failure, unexpected layout, or legacy operator-supplied binary path fails closed and removes the incomplete ceremony workspace.
 
 ## Why the archive digest and binary hash remain separate
 
@@ -40,15 +44,15 @@ GitHub's artifact digest identifies the downloaded artifact archive. The binary 
 
 The amended flow establishes the missing linkage operationally and cryptographically:
 
-`successful main Native Builds run -> exact artifact ID -> downloaded archive bytes -> GitHub artifact digest match -> controlled canonical extracted binary -> independent binary SHA-256`
+`successful main Native Builds run -> exact artifact ID -> downloaded archive bytes -> GitHub artifact digest match -> controlled materialization -> post-materialization identity recheck -> canonical extracted binary -> independent binary SHA-256`
 
-The evidence schema does not need a new field because it already records the run/head, artifact ID/name/digest, and binary SHA-256. The security defect was how `binarySha256` was sourced, not a missing JSON field.
+The evidence schema does not need a new field because it already records the run/head, artifact ID/name/digest, and binary SHA-256. The security defects were how `binarySha256` was sourced and the lack of a stability check across the multi-request materialization window, not a missing JSON field.
 
 ## Ceremony identifier remains unchanged
 
 `ceremonyId` remains an identifier, not authentication. Its approved deterministic input set is unchanged. This amendment does not silently add artifact IDs/digests to that identifier and does not change the existing fixed vector.
 
-Artifact authority is enforced by preparation validation and the trusted fetch/hash pipeline, not by treating `ceremonyId` as a signature.
+Artifact authority is enforced by preparation validation and the trusted fetch/hash/stability pipeline, not by treating `ceremonyId` as a signature.
 
 ## CLI and workspace change
 
@@ -76,18 +80,19 @@ The amended implementation distinguishes:
 
 - `FQR_EVIDENCE_ARTIFACT_FETCH` — artifact retrieval is unavailable, malformed at the command boundary, or a legacy external binary path is supplied;
 - `FQR_EVIDENCE_ARTIFACT_BYTES` — downloaded archive SHA-256 does not match GitHub's artifact digest or the fetch result cannot prove that digest;
-- `FQR_EVIDENCE_ARTIFACT_LAYOUT` — controlled extraction does not contain exactly the expected canonical non-empty regular binary.
+- `FQR_EVIDENCE_ARTIFACT_LAYOUT` — controlled extraction does not contain exactly the expected canonical non-empty regular binary;
+- `FQR_EVIDENCE_ARTIFACT_DRIFT` — the authoritative run/head or either platform artifact ID/name/digest changed during materialization.
 
 All remain fail-closed.
 
 ## TDD evidence
 
-Hosted RED head:
+Initial artifact-binding RED head:
 `eb43e9cab98cc076dadde2599b1a5f893f167e7a`
 
 CI `34541282014` reported **174 tests / 169 PASS / exactly 5 FAIL**. The key regression test failed with `Missing expected rejection` when arbitrary legacy Windows/Android binary paths were supplied, directly reproducing the authority defect. The other failures were the new artifact-fetch/digest contract and dependent preparation fixtures. `npm ci` and High audit remained clean.
 
-Production hardening commit:
+Initial production hardening commit:
 `34e4ee5ded40f58bf47c8cc591ed65a68cc460e7`
 
 That implementation made all new preparation provenance tests GREEN. Three pre-existing finalizer tests then failed only because their setup fixture still invoked the deliberately removed legacy binary-path API; no finalizer production behavior failed.
@@ -96,6 +101,16 @@ Fixture-alignment head:
 `99e911491405302d940b19cd61fb01f9e2142c52`
 
 CI `34541495012` is GREEN with **174/174 tests PASS**, 0 vulnerabilities, web/native-UI builds PASS, signaling Wrangler dry-run PASS, and web-deploy dry-run PASS.
+
+Artifact-drift regression RED:
+`68f2d305f3deb851bb60900ba6b36010022e847c`
+
+CI `34568224302` reported **175 tests / 174 PASS / exactly 1 FAIL**. The sole failure was `authoritative preparation rejects artifact identity drift during materialization` with `Missing expected rejection`; `npm ci` and High audit remained clean.
+
+Artifact-drift production hardening:
+`fffbbecea0ac837cc66531aead1965e69cae3aee`
+
+CI `34568323257` is GREEN with **175/175 tests PASS**, 0 vulnerabilities, web/native-UI builds PASS, signaling Wrangler dry-run PASS, and web-deploy dry-run PASS. Browser Reliability `34568323181` and Pages `34568323223` are also GREEN on that production-fix head. Exact final documentation-head verification remains required after provenance docs/runbook are synchronized.
 
 ## Scope guard
 
