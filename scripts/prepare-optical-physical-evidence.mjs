@@ -112,6 +112,27 @@ function validateFetchedArtifact({ platform, artifact, destinationDir, fetched }
   return binaryPath;
 }
 
+function sameArtifact(left, right) {
+  return left?.artifactId === right?.artifactId &&
+    left?.name === right?.name &&
+    left?.artifactDigest === right?.artifactDigest;
+}
+
+function assertBuildIdentityStable(admitted, observed) {
+  if (
+    admitted?.repository !== observed?.repository ||
+    admitted?.workflow !== observed?.workflow ||
+    admitted?.workflowRunId !== observed?.workflowRunId ||
+    admitted?.event !== observed?.event ||
+    admitted?.headBranch !== observed?.headBranch ||
+    admitted?.commitSha !== observed?.commitSha ||
+    !sameArtifact(admitted?.artifacts?.windows, observed?.artifacts?.windows) ||
+    !sameArtifact(admitted?.artifacts?.android, observed?.artifacts?.android)
+  ) {
+    fail('FQR_EVIDENCE_ARTIFACT_DRIFT', 'Native Builds artifact identity changed during materialization');
+  }
+}
+
 function generatePayload(filePath, bytes) {
   const fd = fs.openSync(filePath, 'wx', 0o600);
   const hash = createHash('sha256');
@@ -220,6 +241,7 @@ export async function prepareCeremony({
     const windowsPath = validateFetchedArtifact({
       platform: 'windows', artifact: build.artifacts.windows, destinationDir: windowsDir, fetched: windowsFetched,
     });
+    assertBuildIdentityStable(build, resolveNativeBuild({ runId, execGh }));
 
     const androidDir = path.join(artifactRoot, 'android');
     const androidFetched = await artifactFetcher({
@@ -228,6 +250,7 @@ export async function prepareCeremony({
     const androidPath = validateFetchedArtifact({
       platform: 'android', artifact: build.artifacts.android, destinationDir: androidDir, fetched: androidFetched,
     });
+    assertBuildIdentityStable(build, resolveNativeBuild({ runId, execGh }));
 
     const payloadPath = path.join(workspace, 'payload.bin');
     const sourceSha256 = generatePayload(payloadPath, payloadBytes);
