@@ -1,7 +1,7 @@
 import { compactReceiveCode, isReceiveCode, SESSION_TTL_MS } from '../../../packages/core/session.js';
 
 const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
-const TURN_MIN_CREDENTIAL_TTL_SECONDS = 300;
+const TURN_MIN_CREDENTIAL_TTL_SECONDS = 1;
 const TURN_MAX_CREDENTIAL_TTL_SECONDS = 172800;
 const TURN_DEFAULT_CREDENTIAL_TTL_SECONDS = 3600;
 const JSON_HEADERS = {
