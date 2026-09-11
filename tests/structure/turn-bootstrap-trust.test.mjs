@@ -69,3 +69,23 @@ test('TURN bootstrap rolls back Worker secrets and the newly-created Calls key w
   assert.match(script, /await\s+deleteManagedTurnKey\(uid\)/);
   assert.match(script, /rollback/i);
 });
+
+test('TURN bootstrap diagnoses Calls token validity before mutating Cloudflare', () => {
+  assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
+  const script = fs.readFileSync(bootstrapUrl, 'utf8');
+
+  assert.match(script, /\/user\/tokens\/verify/);
+  assert.match(script, /status\s*!==\s*['"]active['"]/);
+  assert.match(script, /Cloudflare Calls API token is not active/);
+});
+
+test('TURN bootstrap distinguishes account visibility from Calls write authorization', () => {
+  assert.ok(fs.existsSync(bootstrapUrl), 'production TURN bootstrap script must exist');
+  const script = fs.readFileSync(bootstrapUrl, 'utf8');
+
+  assert.match(script, /async function probeCallsAccess/);
+  assert.match(script, /method:\s*['"]GET['"]/);
+  assert.match(script, /accounts\/\$\{encodeURIComponent\(accountId\)\}\/calls\/turn_keys/);
+  assert.match(script, /token is active but cannot access Realtime TURN for the configured account/);
+  assert.match(script, /token can read Realtime TURN for the configured account but TURN key creation was denied/);
+});
