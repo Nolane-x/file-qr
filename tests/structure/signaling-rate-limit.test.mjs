@@ -46,13 +46,15 @@ test('TURN credential minting rate-limits only after live-lease authorization an
   const configured = route.indexOf('turnConfigured(env)');
   const authorize = route.indexOf('turn-authorize');
   const limiter = route.indexOf('TURN_CREDENTIAL_RATE_LIMIT');
-  const provider = route.indexOf('generateTurnCredentials(env)');
+  const provider = route.indexOf('generateTurnCredentials(env, maxTtlSeconds)');
 
   assert.ok(configured >= 0 && authorize > configured, 'TURN configuration and lease authorization must remain first');
   assert.ok(limiter > authorize, 'TURN limiter must run only after live-lease authorization');
   assert.ok(provider > limiter, 'TURN limiter must deny before provider credential generation');
   assert.match(route, /compactReceiveCode\(code\)/);
   assert.match(route, /SHA-256/i);
+  assert.match(resourceRoutes, /expiresAt/);
+  assert.match(resourceRoutes, /maxTtlSeconds/);
 });
 
 test('rate-limit denial is explicit and limiter unavailability fails closed', () => {
