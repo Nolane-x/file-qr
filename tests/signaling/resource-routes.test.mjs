@@ -65,7 +65,10 @@ function turnEnv({ authorizationStatus = 200, limitResult = { success: false } }
           return {
             async fetch() {
               state.authorizationCalls += 1;
-              return new Response(JSON.stringify({ ok: authorizationStatus === 200 }), { status: authorizationStatus });
+              return new Response(JSON.stringify({
+                ok: authorizationStatus === 200,
+                expiresAt: Date.now() + 600_000,
+              }), { status: authorizationStatus });
             },
           };
         },
