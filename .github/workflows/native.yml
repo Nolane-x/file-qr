@@ -62,6 +62,21 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
           VITE_SIGNALING_ORIGIN: ${{ vars.SIGNALING_ORIGIN || 'https://file-qr-signaling.nolane-file.workers.dev' }}
+      - name: Verify packaged Android camera feature remains optional
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=$(find apps/native/src-tauri/gen/android -type f -name '*.apk' | head -n 1)
+          test -n "$apk"
+          badging="$("$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$apk")"
+          if ! printf '%s\n' "$badging" | grep -Eq "uses-feature-not-required:([[:space:]]*name=)?'android\.hardware\.camera\.any'"; then
+            echo '::error::Packaged Android camera feature is not explicitly optional.'
+            exit 1
+          fi
+          if printf '%s\n' "$badging" | grep -Eq "uses-feature:([[:space:]]*name=)?'android\.hardware\.camera\.any'"; then
+            echo '::error::Packaged Android camera feature became required.'
+            exit 1
+          fi
       - name: Normalize Android artifact name
         run: |
           mkdir -p release
