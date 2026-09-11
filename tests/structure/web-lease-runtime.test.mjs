@@ -62,3 +62,11 @@ test('each WebRTC attempt owns one-shot ICE recovery and transport diagnostics',
   assert.match(main, /handleState\(state\)/);
   assert.match(main, /Direct|Relay|Secure P2P/);
 });
+
+test('runtime binds one relay secret to the QR lease and preserves it only for structured receive payloads', () => {
+  assert.match(main, /generateRelaySecret/);
+  assert.match(main, /buildReceivePayloadUrl/);
+  assert.match(main, /parseReceivePayloadDetails/);
+  assert.match(main, /relaySecret/);
+  assert.match(main, /receiveFile\([^)]*relaySecret/);
+});
