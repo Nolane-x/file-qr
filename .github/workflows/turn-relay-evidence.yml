@@ -1,0 +1,79 @@
+name: TURN Relay Evidence
+
+on:
+  workflow_run:
+    workflows: ['Deploy Signaling']
+    types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/turn-relay-evidence.yml'
+      - 'tests/browser/production-turn-relay.mjs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/turn-relay-evidence.yml'
+      - 'tests/browser/production-turn-relay.mjs'
+  workflow_dispatch:
+
+concurrency:
+  group: turn-relay-evidence-production-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  production-relay:
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.20.0
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Install relay probe browser
+        run: |
+          npm install --no-save --package-lock=false playwright@1.63.0
+          npx playwright install --with-deps chromium
+
+      - name: Prove production relay path
+        env:
+          FILE_QR_SIGNALING_ORIGIN: https://file-qr-signaling.nolane-file.workers.dev
+          FILE_QR_TURN_EVIDENCE_PATH: turn-relay-evidence.json
+          FILE_QR_TURN_TIMEOUT_MS: '45000'
+        run: node tests/browser/production-turn-relay.mjs
+
+      - name: Publish relay evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: turn-relay-evidence-${{ github.run_id }}
+          path: turn-relay-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize relay proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const x = JSON.parse(fs.readFileSync("turn-relay-evidence.json", "utf8"));
+            if (x?.selectedCandidateType?.left !== "relay" || x?.selectedCandidateType?.right !== "relay" || x?.payloadVerified !== true) process.exit(1);
+            console.log(`TURN relay evidence: PASS (${x.selectedCandidateType.left}/${x.selectedCandidateType.right})`);
+          '
+          {
+            echo '### File QR production TURN relay evidence'
+            echo
+            echo 'Relay-only WebRTC data channel: PASS'
+            echo 'Selected candidate type (both peers): relay'
+            echo 'Payload integrity over relay: PASS'
+            echo 'Evidence artifact: turn-relay-evidence.json'
+          } >> "$GITHUB_STEP_SUMMARY"

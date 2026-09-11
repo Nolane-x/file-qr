@@ -69,17 +69,8 @@ async function waitFor(predicate, timeoutMs, intervalMs = 500, sleepFn = sleep) 
   return null;
 }
 
-export async function collectPhysicalAndroidEvidence({
-  apkPath = defaultApkPath,
-  evidencePath = defaultEvidencePath,
-  adbFn = adb,
-  sleepFn = sleep,
-} = {}) {
+async function collectAndroidDeviceContext({ apkPath = defaultApkPath, adbFn = adb } = {}) {
   const getProp = (serial, name) => adbFn(serial, ['shell', 'getprop', name]);
-  const uiDump = (serial) => {
-    adbFn(serial, ['shell', 'uiautomator', 'dump', '/sdcard/fileqr-ui.xml']);
-    return adbFn(serial, ['shell', 'cat', '/sdcard/fileqr-ui.xml']);
-  };
 
   if (!fs.existsSync(apkPath)) {
     throw new Error(`Android APK not found: ${apkPath}`);
@@ -120,6 +111,45 @@ export async function collectPhysicalAndroidEvidence({
   if (!cameraPermissionGranted) {
     throw new Error('CAMERA runtime permission is not granted after pm grant');
   }
+
+  const facts = {
+    packageName,
+    apkSha256,
+    versionName,
+    versionCode,
+    device: {
+      manufacturer,
+      model,
+      androidRelease,
+      sdk,
+      hardware,
+      emulatorRejected: true,
+      deviceSerialHash: sha256(serial),
+      buildFingerprintHash: sha256(buildFingerprint),
+    },
+    cameraPermissionGranted,
+  };
+
+  return { serial, facts };
+}
+
+export async function collectAndroidDeviceFacts(options = {}) {
+  const { facts } = await collectAndroidDeviceContext(options);
+  return facts;
+}
+
+export async function collectPhysicalAndroidEvidence({
+  apkPath = defaultApkPath,
+  evidencePath = defaultEvidencePath,
+  adbFn = adb,
+  sleepFn = sleep,
+} = {}) {
+  const uiDump = (serial) => {
+    adbFn(serial, ['shell', 'uiautomator', 'dump', '/sdcard/fileqr-ui.xml']);
+    return adbFn(serial, ['shell', 'cat', '/sdcard/fileqr-ui.xml']);
+  };
+
+  const { serial, facts } = await collectAndroidDeviceContext({ apkPath, adbFn });
 
   adbFn(serial, ['shell', 'am', 'force-stop', packageName]);
   adbFn(serial, [
@@ -176,21 +206,12 @@ export async function collectPhysicalAndroidEvidence({
   const evidence = {
     schemaVersion: 1,
     capturedAt: new Date().toISOString(),
-    packageName,
-    apkSha256,
-    versionName,
-    versionCode,
-    device: {
-      manufacturer,
-      model,
-      androidRelease,
-      sdk,
-      hardware,
-      emulatorRejected: true,
-      deviceSerialHash: sha256(serial),
-      buildFingerprintHash: sha256(buildFingerprint),
-    },
-    cameraPermissionGranted,
+    packageName: facts.packageName,
+    apkSha256: facts.apkSha256,
+    versionName: facts.versionName,
+    versionCode: facts.versionCode,
+    device: facts.device,
+    cameraPermissionGranted: facts.cameraPermissionGranted,
     cameraOwnerObserved,
     appRecovered,
     cameraImageryCaptured: false,
