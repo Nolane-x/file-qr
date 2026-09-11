@@ -60,6 +60,25 @@ async function verifyCallsTokenActive() {
   }
 }
 
+async function verifyCallsTokenForAccount() {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/tokens/verify`,
+    {
+      method: 'GET',
+      headers: { authorization: `Bearer ${callsApiToken}` },
+    },
+  );
+  const body = await readJson(response);
+  const status = String(body?.result?.status || '');
+  if (!response.ok || body?.success !== true || status !== 'active') {
+    const messages = cloudflareMessages(body);
+    throw new Error(
+      'Cloudflare Calls API token is active but is not valid for the configured account: '
+      + `HTTP ${response.status}${messages ? ` (${messages})` : ''}`,
+    );
+  }
+}
+
 async function probeCallsAccess() {
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/calls/turn_keys`,
@@ -200,6 +219,7 @@ if (!accountId || !workerApiToken || !callsApiToken) {
 }
 
 await verifyCallsTokenActive();
+await verifyCallsTokenForAccount();
 await probeCallsAccess();
 const { uid, key } = await createManagedTurnKey();
 process.stdout.write(`::add-mask::${uid}\n`);
