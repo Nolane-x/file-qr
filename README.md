@@ -7,7 +7,7 @@ File QR is a deliberately small file-transfer product for **Windows and Android*
 ## v0.4 product contract
 
 - **Web:** drop a file → get a QR + 10-character receive code → the other Windows/Android browser can **scan the QR with its camera**, paste a File QR link/code, or type the code → WebRTC transfers the file.
-- **Native:** the same network path with a unified **Scan · Paste · Type** receive flow, plus **QR Stream** for offline screen-to-camera transfer.
+- **Native:** the same network path with a unified **Scan · Paste · Type** receive flow, plus **QR Stream** for offline screen-to-camera transfer. QR Stream v0.1 remains the default compatibility sender; v0.2 is an explicit experimental block-fountain mode.
 - **Reusable 10-minute lease:** a QR/code remains reusable for exactly 600 seconds from session creation. Successful and failed downloads do not consume it; multiple receivers may download sequentially while only one receiver is active at a time.
 - **Expiry boundary:** a new receiver is admitted only while `Date.now() < expiresAt`. A receiver admitted before expiry may finish an already-open WebRTC transfer after the signaling lease expires.
 - **Retry/resume:** network attempts are isolated with an `attemptId`. Protocol v2 resumes from a validated absolute byte offset; OPFS-backed partial data can survive a retry/reload in the same browser profile, while the in-memory fallback is runtime-only.
@@ -118,11 +118,25 @@ Camera access is user initiated. Web and native Windows open the WebView camera 
 
 All scanned strings pass through the same File QR receive-capability parser; arbitrary scanned URLs are **never navigated automatically**. Clipboard reads are also user initiated only through the **Paste** action.
 
-## Offline QR Stream v0.1
+## Offline QR Stream
 
-The optical format remains intentionally conservative in v0.4: independent repeated `FQR1` frames with sequence number, total count, CRC32 and Base64URL payload. The receiver deduplicates frames and reconstructs only when all frames are present.
+### v0.1 compatibility path
 
-Optical send is capped at **8 MB** before the file is read into memory. Larger files should use Network mode. CRC32 detects accidental corruption but is **not** cryptographic authentication. No optical throughput claim is made without hardware benchmark evidence.
+QR Stream v0.1 remains intentionally conservative: independent repeated `FQR1` frames with sequence number, total count, CRC32 and Base64URL payload. The receiver deduplicates frames and reconstructs only when all frames are present.
+
+Optical v0.1 send is capped at **8 MiB** before the file is read into memory and retains its ten-minute broadcast stop. CRC32 detects accidental corruption but is **not** cryptographic authentication. The v0.1 format remains available and is the default offline sender mode.
+
+### v0.2 experimental block-fountain path
+
+QR Stream v0.2 (`FQR2`) is an **experimental** offline mode with an initial **64 MiB** admission cap. It keeps file processing bounded to one **64 KiB** block at a time and emits systematic plus deterministic repair symbols instead of requiring every original frame to be seen. The native receiver recognizes exact `FQR1|` and `FQR2|` prefixes and keeps the two decoders isolated.
+
+FQR2 defaults to 768-byte source symbols. Per-frame CRC32 rejects corrupted frame payloads, while each reconstructed block must match its declared SHA-256 before it is persisted or exposed. SHA-256 here is an integrity check, **not sender authentication**.
+
+The FQR2 receiver holds one incomplete block decoder at a time, bounds decoder equations and recent sequence identities, and drops newly observed FQR2 camera frames while an asynchronous FQR2 accept is already in flight instead of building an unbounded queue. Verified blocks are written at exact offsets; durable sidecar progress is updated only after the block data write succeeds.
+
+Whole-file memory fallback is allowed only for files up to **8 MiB**. Larger FQR2 receives require persistent random-access storage such as OPFS and fail closed when that capability is unavailable. FQR2 does not inherit the v0.1 ten-minute broadcast stop; it continues until the user stops it or the runtime closes.
+
+FQR2 is not a production-default or performance claim. No optical throughput, range, universal-camera compatibility, or production-readiness claim is made without separate physical Windows/Android camera evidence. The 64 MiB cap should not be raised and FQR2 should not become the default until that empirical gate exists.
 
 ## Deployment
 
