@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { handleTurnCredentials } from '../../services/signaling/src/resource-routes.js';
 
 const TURN_REQUEST = () => new Request('https://signal.example/v1/turn-credentials', {
@@ -35,4 +36,11 @@ test('TURN provider minting is bounded by the remaining authorized lease lifetim
   assert.equal(providerMaxTtlSeconds, 120);
   const payload = await response.json();
   assert.ok(payload.expiresAt <= leaseExpiresAt);
+});
+
+test('Worker provider adapter accepts the lease TTL bound instead of minting an independent one-hour credential', () => {
+  const signaling = fs.readFileSync(new URL('../../services/signaling/src/index.js', import.meta.url), 'utf8');
+  assert.match(signaling, /generateTurnCredentials\(env,\s*maxTtlSeconds\)/);
+  assert.match(signaling, /generateTurnCredentialsImpl:\s*\(maxTtlSeconds\)\s*=>\s*generateTurnCredentials\(env,\s*maxTtlSeconds\)/);
+  assert.match(signaling, /Math\.min\([^\n]*maxTtlSeconds/);
 });
