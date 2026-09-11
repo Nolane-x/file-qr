@@ -1,6 +1,9 @@
 import { compactReceiveCode, isReceiveCode, SESSION_TTL_MS } from '../../../packages/core/session.js';
 
 const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
+const TURN_MIN_CREDENTIAL_TTL_SECONDS = 300;
+const TURN_MAX_CREDENTIAL_TTL_SECONDS = 172800;
+const TURN_DEFAULT_CREDENTIAL_TTL_SECONDS = 3600;
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
@@ -48,6 +51,16 @@ function defaultTurnConfigured(env) {
 
 function defaultRoomStub(env, code) {
   return env.SESSIONS.get(env.SESSIONS.idFromName(compactReceiveCode(code)));
+}
+
+export function clampTurnCredentialTtlSeconds(configuredSeconds, leaseExpiresAt, nowMs = Date.now()) {
+  const configured = Number(configuredSeconds);
+  const requested = Number.isFinite(configured)
+    ? Math.min(TURN_MAX_CREDENTIAL_TTL_SECONDS, Math.max(TURN_MIN_CREDENTIAL_TTL_SECONDS, Math.floor(configured)))
+    : TURN_DEFAULT_CREDENTIAL_TTL_SECONDS;
+  const remainingMs = Number(leaseExpiresAt) - Number(nowMs);
+  if (!Number.isFinite(remainingMs) || remainingMs < TURN_MIN_CREDENTIAL_TTL_SECONDS * 1000) return 0;
+  return Math.min(requested, Math.floor(remainingMs / 1000));
 }
 
 export async function handleSessionAllocation(request, env, dependencies = {}) {
@@ -107,6 +120,17 @@ export async function handleTurnCredentials(request, env, dependencies = {}) {
     return jsonImpl({ error: 'session-expired' }, { status: authorization.status === 410 ? 410 : 404 });
   }
 
+  let authorizationBody;
+  try {
+    authorizationBody = await authorization.json();
+  } catch {
+    return jsonImpl({ error: 'turn-authorization-unavailable' }, { status: 502 });
+  }
+  const leaseExpiresAt = Number(authorizationBody?.expiresAt);
+  if (!Number.isFinite(leaseExpiresAt) || leaseExpiresAt <= Date.now()) {
+    return jsonImpl({ error: 'session-expired' }, { status: 410 });
+  }
+
   const compactCodeImpl = dependencies.compactCodeImpl || compactReceiveCode;
   const rateLimitBinding = dependencies.rateLimitBinding ?? env.TURN_CREDENTIAL_RATE_LIMIT;
   const turnRateKey = await hashedRateLimitKey('turn', compactCodeImpl(code));
@@ -117,7 +141,7 @@ export async function handleTurnCredentials(request, env, dependencies = {}) {
   if (typeof generateTurnCredentialsImpl !== 'function') {
     return jsonImpl({ error: 'turn-provider-unavailable' }, { status: 502 });
   }
-  const credentials = await generateTurnCredentialsImpl();
+  const credentials = await generateTurnCredentialsImpl({ leaseExpiresAt });
   if (!credentials) return jsonImpl({ error: 'turn-provider-unavailable' }, { status: 502 });
   return jsonImpl(credentials);
 }
