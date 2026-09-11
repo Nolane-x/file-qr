@@ -4,18 +4,49 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidRoot = path.join(root, 'apps', 'native', 'src-tauri', 'gen', 'android');
+const toolsNamespace = 'xmlns:tools="http://schemas.android.com/tools"';
+const cameraFeature = '<uses-feature android:name="android.hardware.camera.any" android:required="false" tools:replace="android:required" />';
+const cameraFeaturePattern = /<uses-feature\b(?=[^>]*\bandroid:name\s*=\s*["']android\.hardware\.camera\.any["'])[^>]*\/?>/;
+
+function normalizeCameraFeatureTag(tag) {
+  const base = tag
+    .replace(/\s+android:required\s*=\s*(?:"[^"]*"|'[^']*')/g, '')
+    .replace(/\s+tools:replace\s*=\s*(?:"[^"]*"|'[^']*')/g, '')
+    .replace(/\s*\/?>$/, '');
+  return `${base} android:required="false" tools:replace="android:required" />`;
+}
 
 export function patchManifestText(source) {
+  const manifestMatch = source.match(/<manifest\b[^>]*>/);
+  if (!manifestMatch) throw new Error('AndroidManifest.xml has no <manifest> root');
+
+  let output = source;
+  let manifestRoot = manifestMatch[0];
+  if (/\bxmlns:tools\s*=/.test(manifestRoot)) {
+    if (!/\bxmlns:tools\s*=\s*["']http:\/\/schemas\.android\.com\/tools["']/.test(manifestRoot)) {
+      throw new Error('AndroidManifest.xml has an unexpected tools namespace');
+    }
+  } else {
+    const patchedRoot = manifestRoot.replace(/>$/, ` ${toolsNamespace}>`);
+    output = output.replace(manifestRoot, patchedRoot);
+    manifestRoot = patchedRoot;
+  }
+
   const additions = [];
-  if (!source.includes('android.permission.CAMERA')) {
+  if (!output.includes('android.permission.CAMERA')) {
     additions.push('    <uses-permission android:name="android.permission.CAMERA" />');
   }
-  if (!source.includes('android.hardware.camera.any')) {
-    additions.push('    <uses-feature android:name="android.hardware.camera.any" android:required="false" />');
+
+  if (cameraFeaturePattern.test(output)) {
+    output = output.replace(cameraFeaturePattern, (tag) => normalizeCameraFeatureTag(tag));
+  } else {
+    additions.push(`    ${cameraFeature}`);
   }
-  if (!additions.length) return source;
-  if (!/<manifest\b[^>]*>/.test(source)) throw new Error('AndroidManifest.xml has no <manifest> root');
-  return source.replace(/(<manifest\b[^>]*>)/, `$1\n${additions.join('\n')}`);
+
+  if (additions.length) {
+    output = output.replace(/(<manifest\b[^>]*>)/, `$1\n${additions.join('\n')}`);
+  }
+  return output;
 }
 
 function findManifests(dir) {
