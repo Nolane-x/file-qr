@@ -20,3 +20,11 @@ test('native Android build always runs the camera manifest patch after tauri and
   assert.ok(workflow.includes('run: npm run android:init'));
   assert.ok(workflow.includes("grep -R -q 'android.permission.CAMERA'"));
 });
+
+test('native Android build verifies the merged APK keeps camera hardware optional', () => {
+  const workflow = fs.readFileSync(new URL('../../.github/workflows/native.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /aapt2[^\n]*dump badging/);
+  assert.ok(workflow.includes('uses-feature-not-required'));
+  assert.ok(workflow.includes('android.hardware.camera.any'));
+  assert.match(workflow, /Packaged Android camera feature became required/);
+});
