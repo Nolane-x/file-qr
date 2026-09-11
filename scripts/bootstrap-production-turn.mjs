@@ -45,7 +45,11 @@ async function requestTurn(code) {
 }
 
 async function verifyCallsTokenActive() {
-  const response = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+  const isAccountToken = callsApiToken.startsWith('cfat_');
+  const verifyUrl = isAccountToken
+    ? `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/tokens/verify`
+    : 'https://api.cloudflare.com/client/v4/user/tokens/verify';
+  const response = await fetch(verifyUrl, {
     method: 'GET',
     headers: { authorization: `Bearer ${callsApiToken}` },
   });
@@ -56,25 +60,6 @@ async function verifyCallsTokenActive() {
     throw new Error(
       `Cloudflare Calls API token is not active: HTTP ${response.status}`
       + `${messages ? ` (${messages})` : ''}`,
-    );
-  }
-}
-
-async function verifyCallsTokenForAccount() {
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/tokens/verify`,
-    {
-      method: 'GET',
-      headers: { authorization: `Bearer ${callsApiToken}` },
-    },
-  );
-  const body = await readJson(response);
-  const status = String(body?.result?.status || '');
-  if (!response.ok || body?.success !== true || status !== 'active') {
-    const messages = cloudflareMessages(body);
-    throw new Error(
-      'Cloudflare Calls API token is active but is not valid for the configured account: '
-      + `HTTP ${response.status}${messages ? ` (${messages})` : ''}`,
     );
   }
 }
@@ -219,7 +204,6 @@ if (!accountId || !workerApiToken || !callsApiToken) {
 }
 
 await verifyCallsTokenActive();
-await verifyCallsTokenForAccount();
 await probeCallsAccess();
 const { uid, key } = await createManagedTurnKey();
 process.stdout.write(`::add-mask::${uid}\n`);
