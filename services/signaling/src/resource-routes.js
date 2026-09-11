@@ -107,6 +107,20 @@ export async function handleTurnCredentials(request, env, dependencies = {}) {
     return jsonImpl({ error: 'session-expired' }, { status: authorization.status === 410 ? 410 : 404 });
   }
 
+  let authorizationBody;
+  try {
+    authorizationBody = await authorization.json();
+  } catch {
+    return jsonImpl({ error: 'turn-authorization-unavailable' }, { status: 502 });
+  }
+  const nowImpl = dependencies.nowImpl || Date.now;
+  const expiresAt = Number(authorizationBody?.expiresAt);
+  const remainingLeaseMs = expiresAt - nowImpl();
+  const maxTtlSeconds = Math.floor(remainingLeaseMs / 1000);
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(maxTtlSeconds) || maxTtlSeconds < 1) {
+    return jsonImpl({ error: 'session-expired' }, { status: 410 });
+  }
+
   const compactCodeImpl = dependencies.compactCodeImpl || compactReceiveCode;
   const rateLimitBinding = dependencies.rateLimitBinding ?? env.TURN_CREDENTIAL_RATE_LIMIT;
   const turnRateKey = await hashedRateLimitKey('turn', compactCodeImpl(code));
@@ -117,7 +131,7 @@ export async function handleTurnCredentials(request, env, dependencies = {}) {
   if (typeof generateTurnCredentialsImpl !== 'function') {
     return jsonImpl({ error: 'turn-provider-unavailable' }, { status: 502 });
   }
-  const credentials = await generateTurnCredentialsImpl();
+  const credentials = await generateTurnCredentialsImpl(maxTtlSeconds);
   if (!credentials) return jsonImpl({ error: 'turn-provider-unavailable' }, { status: 502 });
   return jsonImpl(credentials);
 }
