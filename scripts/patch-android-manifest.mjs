@@ -5,15 +5,29 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidRoot = path.join(root, 'apps', 'native', 'src-tauri', 'gen', 'android');
 const toolsNamespace = 'xmlns:tools="http://schemas.android.com/tools"';
-const cameraFeature = '<uses-feature android:name="android.hardware.camera.any" android:required="false" tools:replace="android:required" />';
-const cameraFeaturePattern = /<uses-feature\b(?=[^>]*\bandroid:name\s*=\s*["']android\.hardware\.camera\.any["'])[^>]*\/?>/;
+const optionalCameraFeatures = Object.freeze([
+  { name: 'android.hardware.camera.any', replaceMergedRequired: true },
+  { name: 'android.hardware.camera', replaceMergedRequired: false },
+  { name: 'android.hardware.camera.autofocus', replaceMergedRequired: false },
+]);
 
-function normalizeCameraFeatureTag(tag) {
+function featurePattern(name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<uses-feature\\b(?=[^>]*\\bandroid:name\\s*=\\s*["']${escaped}["'])[^>]*\\/?>`);
+}
+
+function canonicalFeatureTag(name, replaceMergedRequired) {
+  const replace = replaceMergedRequired ? ' tools:replace="android:required"' : '';
+  return `<uses-feature android:name="${name}" android:required="false"${replace} />`;
+}
+
+function normalizeFeatureTag(tag, { name, replaceMergedRequired }) {
   const base = tag
     .replace(/\s+android:required\s*=\s*(?:"[^"]*"|'[^']*')/g, '')
     .replace(/\s+tools:replace\s*=\s*(?:"[^"]*"|'[^']*')/g, '')
     .replace(/\s*\/?>$/, '');
-  return `${base} android:required="false" tools:replace="android:required" />`;
+  const replace = replaceMergedRequired ? ' tools:replace="android:required"' : '';
+  return `${base} android:required="false"${replace} />`;
 }
 
 export function patchManifestText(source) {
@@ -21,7 +35,7 @@ export function patchManifestText(source) {
   if (!manifestMatch) throw new Error('AndroidManifest.xml has no <manifest> root');
 
   let output = source;
-  let manifestRoot = manifestMatch[0];
+  const manifestRoot = manifestMatch[0];
   if (/\bxmlns:tools\s*=/.test(manifestRoot)) {
     if (!/\bxmlns:tools\s*=\s*["']http:\/\/schemas\.android\.com\/tools["']/.test(manifestRoot)) {
       throw new Error('AndroidManifest.xml has an unexpected tools namespace');
@@ -29,7 +43,6 @@ export function patchManifestText(source) {
   } else {
     const patchedRoot = manifestRoot.replace(/>$/, ` ${toolsNamespace}>`);
     output = output.replace(manifestRoot, patchedRoot);
-    manifestRoot = patchedRoot;
   }
 
   const additions = [];
@@ -37,10 +50,13 @@ export function patchManifestText(source) {
     additions.push('    <uses-permission android:name="android.permission.CAMERA" />');
   }
 
-  if (cameraFeaturePattern.test(output)) {
-    output = output.replace(cameraFeaturePattern, (tag) => normalizeCameraFeatureTag(tag));
-  } else {
-    additions.push(`    ${cameraFeature}`);
+  for (const feature of optionalCameraFeatures) {
+    const pattern = featurePattern(feature.name);
+    if (pattern.test(output)) {
+      output = output.replace(pattern, (tag) => normalizeFeatureTag(tag, feature));
+    } else {
+      additions.push(`    ${canonicalFeatureTag(feature.name, feature.replaceMergedRequired)}`);
+    }
   }
 
   if (additions.length) {
