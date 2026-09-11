@@ -10,6 +10,8 @@
 
 **Spec:** `README.md`, `SECURITY.md`, and the existing PR #47 production signaling contract.
 
+**Execution note:** PR #58 is temporarily based on `main` so repository pull-request workflows execute against the exact RED/GREEN candidate. The branch includes the already-audited #47 rate-limit lineage and is intended to supersede #47 if this final combined candidate verifies cleanly.
+
 ## Global Constraints
 
 - Session TTL remains exactly `600_000` ms from creation.
