@@ -37,8 +37,17 @@ test('self-hosted Android evidence refuses non-main dispatch refs and checks out
   assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\b[^\n]*[\s\S]*?with:\s*\n\s*ref:\s*main/);
 });
 
-test('Android physical authority preparation exists as a separate fail-closed helper', () => {
+test('Android physical authority helper exposes a fail-closed exact-artifact CLI', () => {
   assert.ok(fs.existsSync(authorityUrl), 'Android physical authority helper must exist');
+  const source = fs.readFileSync(authorityUrl, 'utf8');
+
+  assert.match(source, /--run-id/);
+  assert.match(source, /--output-dir/);
+  assert.match(source, /--authority/);
+  assert.match(source, /spawnSync\(['"]gh['"]/);
+  assert.match(source, /actions\/artifacts\/\$\{artifact\.artifactId\}\/zip/);
+  assert.match(source, /spawnSync\(['"]unzip['"]/);
+  assert.match(source, /currentHeadSha/);
 });
 
 test('physical Android collector proves a non-emulator camera path without recording camera imagery', () => {
