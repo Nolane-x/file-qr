@@ -15,6 +15,7 @@ import {
   createRelayForwardState,
   isRelayForwardIdle,
   processRelayFrame,
+  tightenRelayBudget,
 } from './relay-forwarder.js';
 
 const JSON_HEADERS = {
@@ -25,6 +26,7 @@ const JSON_HEADERS = {
   'access-control-allow-methods': 'GET,POST,OPTIONS',
 };
 const RELAY_NONCE_PREFIX_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+const RELAY_BUDGET_MESSAGE_MAX_CHARS = 128;
 
 function json(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -368,13 +370,53 @@ export class SessionRoom extends DurableObject {
     }
   }
 
+  #recordRelayMalformed(ws, attachment) {
+    const state = { ...attachment.forwardState, malformedCount: attachment.forwardState.malformedCount + 1 };
+    ws.serializeAttachment({ ...attachment, forwardState: state });
+    if (state.malformedCount >= 3) {
+      try { ws.close(4003, 'Relay protocol violation'); } catch { /* already closed */ }
+    }
+  }
+
   #relayMessage(ws, message, attachment) {
-    if (!(message instanceof ArrayBuffer)) {
-      const state = { ...attachment.forwardState, malformedCount: attachment.forwardState.malformedCount + 1 };
-      ws.serializeAttachment({ ...attachment, forwardState: state });
-      if (state.malformedCount >= 3) {
-        try { ws.close(4003, 'Relay protocol violation'); } catch { /* already closed */ }
+    if (typeof message === 'string') {
+      if (message.length === 0 || message.length > RELAY_BUDGET_MESSAGE_MAX_CHARS) {
+        this.#recordRelayMalformed(ws, attachment);
+        return;
       }
+      let declaration;
+      try { declaration = JSON.parse(message); }
+      catch {
+        this.#recordRelayMalformed(ws, attachment);
+        return;
+      }
+      const keys = declaration && typeof declaration === 'object' && !Array.isArray(declaration)
+        ? Object.keys(declaration).sort()
+        : [];
+      if (
+        keys.length !== 2
+        || keys[0] !== 'remaining'
+        || keys[1] !== 'type'
+        || declaration.type !== 'relay-budget'
+        || !Number.isSafeInteger(declaration.remaining)
+        || declaration.remaining < 0
+      ) {
+        this.#recordRelayMalformed(ws, attachment);
+        return;
+      }
+      try {
+        const state = tightenRelayBudget(attachment.forwardState, declaration.remaining, Date.now());
+        ws.serializeAttachment({ ...attachment, forwardState: state });
+      } catch {
+        const peer = this.#relayPeer(attachment.role, attachment.attemptId);
+        try { ws.close(4003, 'Relay budget violation'); } catch { /* already closed */ }
+        try { peer?.close(4003, 'Peer relay protocol violation'); } catch { /* already closed */ }
+      }
+      return;
+    }
+
+    if (!(message instanceof ArrayBuffer)) {
+      this.#recordRelayMalformed(ws, attachment);
       return;
     }
     const result = processRelayFrame(attachment.forwardState, new Uint8Array(message), Date.now());
