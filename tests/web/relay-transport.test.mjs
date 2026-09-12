@@ -72,6 +72,37 @@ test('relay transport blocks a ninth unacknowledged data frame until cumulative 
   transport.close();
 });
 
+test('protocol acknowledgements bypass a long-running application control handler', async () => {
+  const { createWorkerRelayTransport } = await load();
+  const socket = new FakeSocket();
+  let releaseControl;
+  const controlGate = new Promise((resolve) => { releaseControl = resolve; });
+  const transport = createWorkerRelayTransport({
+    socket,
+    role: 'sender',
+    sendCrypto: fakeCrypto(),
+    receiveCrypto: fakeCrypto(),
+    ackIntervalMs: 10_000,
+    onControl: async () => controlGate,
+  });
+  for (let index = 0; index < 8; index += 1) await transport.send(new Uint8Array([index]));
+  let ninthDone = false;
+  const ninth = transport.send(new Uint8Array([9])).then(() => { ninthDone = true; });
+  socket.emit('message', {
+    data: { kind: 'control', sequence: 0, plaintext: new TextEncoder().encode('{"type":"resume-request"}') },
+  });
+  await tick();
+  socket.emit('message', { data: { kind: 'ack', sequence: 1, plaintext: u32(3) } });
+  await tick();
+  try {
+    assert.equal(ninthDone, true, 'ACK processing must not wait for the application control callback to finish');
+  } finally {
+    releaseControl();
+    await ninth.catch(() => {});
+    transport.close();
+  }
+});
+
 test('receiver emits cumulative encrypted ack every four data frames', async () => {
   const { createWorkerRelayTransport } = await load();
   const socket = new FakeSocket();
