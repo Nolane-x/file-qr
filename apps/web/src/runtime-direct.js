@@ -1,4 +1,4 @@
-import { encodeControlMessage } from '../../../packages/core/transfer.js';
+import { DEFAULT_CHUNK_SIZE, encodeControlMessage } from '../../../packages/core/transfer.js';
 import {
   createIceRecoveryController,
   createPeerConnection,
@@ -16,6 +16,7 @@ import {
   cleanupAttempt,
   current,
   failTransfer,
+  freshAttempt,
   leaseOpen,
   runtimeHooks,
   setState,
@@ -176,14 +177,17 @@ export async function startSenderAttempt(attemptId, relayCapability = '') {
   let active = current();
   if (active.role !== 'sender' || !Number.isInteger(attemptId) || !leaseOpen()) return;
   if (current().attempt.id === attemptId) return;
-  await cleanupAttempt({ nextAttempt: { ...freshAttemptForDirect(), id: attemptId } });
+  await cleanupAttempt({ nextAttempt: { ...freshAttempt(), id: attemptId } });
   if (current().attempt.id !== attemptId) return;
   active = current();
   active.attempt.relayCapability = relayCapability;
   active.attempt.transportPolicy = createTransportPolicy({ hasRelaySecret: Boolean(active.relaySecret), forceRelay: FORCE_WORKER_RELAY });
 
   const socket = active.socket;
-  if (!socket) return;
+  if (!socket) {
+    if (current().attempt.id === attemptId) current().attempt = freshAttempt();
+    return;
+  }
   const transportStart = active.attempt.transportPolicy.start();
   if (transportStart.action === 'require-qr-relay-secret') {
     await failTransfer('Forced secure relay requires scanning the sender QR.');
@@ -215,7 +219,7 @@ export async function startSenderAttempt(attemptId, relayCapability = '') {
       name: latest.file.name,
       size: latest.file.size,
       type: latest.file.type || 'application/octet-stream',
-      chunkSize: 64 * 1024,
+      chunkSize: DEFAULT_CHUNK_SIZE,
     }));
     ui.status.textContent = 'Direct channel open. Waiting for the receiver resume offset…';
   });
@@ -241,15 +245,6 @@ export async function startSenderAttempt(attemptId, relayCapability = '') {
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
   sendSignal(socket, { type: 'description', description: peer.localDescription, attemptId });
-}
-
-function freshAttemptForDirect() {
-  return {
-    id: null, peer: null, channel: null, candidateBuffer: null, connectionTimer: null, iceRecovery: null,
-    relaySocket: null, relayTransport: null, relayCapability: '', transportPolicy: null, transportType: 'unknown',
-    switchingTransport: false, sink: null, meta: null, startedAt: 0, transferred: 0, resumeOffset: 0,
-    committedBytes: 0, streaming: false, acknowledged: false,
-  };
 }
 
 export async function startReceiverDirectAttempt(socket, attemptId) {
