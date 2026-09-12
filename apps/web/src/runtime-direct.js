@@ -18,6 +18,7 @@ import {
   failTransfer,
   freshAttempt,
   leaseOpen,
+  relayEvidence,
   runtimeHooks,
   setState,
   startConnectionTimer,
@@ -63,6 +64,7 @@ export async function handleDirectExhausted(detail, attemptId) {
   let transition;
   try {
     transition = policy.directExhausted({ committedBytes: attempt.committedBytes });
+    relayEvidence.directExhausted({ attemptId, role: active.role });
   } catch (error) {
     await failTransfer(error?.message || detail);
     return;
@@ -199,6 +201,7 @@ export async function startSenderAttempt(attemptId, relayCapability = '') {
     return;
   }
 
+  relayEvidence.directStarted({ attemptId, role: 'sender' });
   const iceServers = await resolveIceServers();
   if (current().attempt.id !== attemptId || current().socket !== socket || !leaseOpen()) return;
   const peer = createPeerConnection({ iceServers });
@@ -253,6 +256,7 @@ export async function startReceiverDirectAttempt(socket, attemptId) {
   if (active.role !== 'receiver' || active.socket !== socket || active.attempt.id !== attemptId || !leaseOpen()) {
     throw new Error('The receive lease expired before connection setup completed.');
   }
+  relayEvidence.directStarted({ attemptId, role: 'receiver' });
   const peer = createPeerConnection({ iceServers });
   const candidateBuffer = createRemoteCandidateBuffer(peer);
   Object.assign(active.attempt, { peer, candidateBuffer });

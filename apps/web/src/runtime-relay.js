@@ -6,6 +6,7 @@ import {
   current,
   failTransfer,
   leaseOpen,
+  relayEvidence,
   setState,
   stopConnectionTimer,
   stopDirectTransport,
@@ -111,6 +112,7 @@ export async function startRelayAttempt(attemptId) {
   active.attempt.switchingTransport = false;
   stopConnectionTimer();
   try { active.attempt.transportPolicy?.relayConnected(); } catch { /* stale transition */ }
+  relayEvidence.relayConnected({ attemptId, role });
   if (ui.eta) ui.eta.textContent = 'Relayed securely';
   ui.status.textContent = 'Relayed securely. Encrypted file data is forwarding through the Worker without file storage.';
 

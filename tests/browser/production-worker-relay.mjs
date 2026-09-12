@@ -83,6 +83,10 @@ async function pageSnapshot(page) {
   }
 }
 
+async function relayEvidenceSnapshot(page) {
+  return page.evaluate(() => globalThis.FileQrRelayEvidence?.snapshot?.() || null);
+}
+
 async function waitForDownloadOrFailure(page, downloadPromise, timeout = 30_000) {
   const failed = page.waitForFunction(() => document.body?.dataset?.state === 'failed', null, { timeout })
     .then(() => ({ kind: 'failed' }))
@@ -118,6 +122,7 @@ export async function runWorkerRelayProbe({
   }
   const entry = new URL(`/?${forceRelayQuery}`, base.origin);
   assert.equal(entry.searchParams.get('forceRelay'), '1', 'evidence probe must explicitly force Worker relay');
+  const captureRelayEvidence = entry.searchParams.get('relayEvidence') === '1';
 
   const payload = randomBytes(payloadBytes);
   const sourceSha256 = digest(payload);
@@ -127,6 +132,8 @@ export async function runWorkerRelayProbe({
   let receiverFinalState = '';
   let senderRelayObserved = false;
   let receiverRelayObserved = false;
+  let senderJournal = null;
+  let receiverJournal = null;
   let sender;
   let receiver;
   let senderSockets;
@@ -157,6 +164,9 @@ export async function runWorkerRelayProbe({
     const fragment = new URLSearchParams(receive.hash.startsWith('#') ? receive.hash.slice(1) : '');
     assert.equal(receive.origin, base.origin, 'receive URL must stay on the tested web origin');
     assert.equal(receive.searchParams.get('forceRelay'), '1', 'receive URL must preserve evidence-only force relay mode');
+    if (captureRelayEvidence) {
+      assert.equal(receive.searchParams.get('relayEvidence'), '1', 'receive URL must preserve relay evidence mode');
+    }
     assert.equal(receive.searchParams.has('relay'), false, 'relay secret must never be carried in the HTTP query');
     assert.equal(/^[0-9A-Z]{5}-[0-9A-Z]{5}$/.test(fragment.get('receive') || ''), true, 'receive fragment must contain a valid code');
     assert.equal(/^[A-Za-z0-9_-]{43}$/.test(fragment.get('relay') || ''), true, 'relay fragment must contain a valid QR secret');
@@ -197,6 +207,13 @@ export async function runWorkerRelayProbe({
     assert.equal(senderRelayObserved, true, 'sender must open the dedicated Worker relay WebSocket');
     assert.equal(receiverRelayObserved, true, 'receiver must open the dedicated Worker relay WebSocket');
 
+    if (captureRelayEvidence) {
+      senderJournal = await relayEvidenceSnapshot(sender);
+      receiverJournal = await relayEvidenceSnapshot(receiver);
+      assert.ok(senderJournal, 'sender relay evidence exporter must be available');
+      assert.ok(receiverJournal, 'receiver relay evidence exporter must be available');
+    }
+
     await senderContext.close();
     await receiverContext.close();
   } finally {
@@ -214,8 +231,16 @@ export async function runWorkerRelayProbe({
     payloadBytes,
     sourceSha256,
     receivedSha256,
-    sender: { finalState: senderFinalState, relaySocketObserved: senderRelayObserved },
-    receiver: { finalState: receiverFinalState, relaySocketObserved: receiverRelayObserved },
+    sender: {
+      finalState: senderFinalState,
+      relaySocketObserved: senderRelayObserved,
+      ...(captureRelayEvidence ? { journal: senderJournal } : {}),
+    },
+    receiver: {
+      finalState: receiverFinalState,
+      relaySocketObserved: receiverRelayObserved,
+      ...(captureRelayEvidence ? { journal: receiverJournal } : {}),
+    },
   };
 
   if (evidencePath) fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });

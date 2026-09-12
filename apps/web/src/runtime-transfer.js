@@ -8,6 +8,7 @@ import {
   failTransfer,
   formatBytes,
   leaseOpen,
+  relayEvidence,
   resetProgress,
   runtimeHooks,
   setState,
@@ -33,6 +34,7 @@ export async function completeSender(payload, attemptId) {
   active.attempt.transferred = active.file.size;
   updateProgress(active.file.size, active.file.size, 'Sent');
   try { active.attempt.transportPolicy?.complete(); } catch { /* completion is already final */ }
+  relayEvidence.transferComplete({ attemptId, role: 'sender', transport: active.attempt.transportType });
   active.attemptsCompleted += 1;
   const completedCount = active.attemptsCompleted;
   const fileName = active.file.name;
@@ -208,6 +210,7 @@ export async function finishReceivedTransfer(payload, attemptId, sendControl) {
 
   updateProgress(meta.size, meta.size, 'Received');
   try { current().attempt.transportPolicy?.complete(); } catch { /* completion is already final */ }
+  relayEvidence.transferComplete({ attemptId, role: 'receiver', transport: active.attempt.transportType });
   const detail = `${meta.name} is ready on this device.`;
   await cleanupLease({ keepView: true });
   setState('done', detail);

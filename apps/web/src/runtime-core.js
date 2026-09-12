@@ -8,7 +8,9 @@ export const SIGNALING_ORIGIN = (import.meta.env.VITE_SIGNALING_ORIGIN || '').re
 export const REPO_RELEASE = 'https://github.com/Nolane-x/file-qr/releases/latest';
 export const CONNECTION_TIMEOUT_MS = 30_000;
 export const SIGNAL_RETRY_MS = 1_000;
-export const FORCE_WORKER_RELAY = new URLSearchParams(location.search).get('forceRelay') === '1';
+const runtimeQuery = new URLSearchParams(location.search);
+export const FORCE_WORKER_RELAY = runtimeQuery.get('forceRelay') === '1';
+export const RELAY_EVIDENCE_MODE = runtimeQuery.get('relayEvidence') === '1';
 const WAKE_STATES = new Set(['connecting', 'sending', 'receiving', 'verifying']);
 
 const STATE_COPY = {
@@ -38,6 +40,73 @@ export const ui = {
   progressWrap: $('[data-progress-wrap]'), progressLabel: $('[data-progress-label]'), progressValue: $('[data-progress-value]'), progressBar: $('[data-progress-bar]'),
   rate: $('[data-rate]'), eta: $('[data-eta]'), transferSize: $('[data-transfer-size]'),
 };
+
+function createRelayEvidenceJournal() {
+  let role = null;
+  let invalid = false;
+  let events = [];
+
+  function reset() {
+    role = null;
+    invalid = false;
+    events = [];
+  }
+
+  function record(type, attemptId, nextRole, transport) {
+    if (!RELAY_EVIDENCE_MODE) return;
+    if (!Number.isSafeInteger(attemptId) || attemptId < 1 || !['sender', 'receiver'].includes(nextRole)) {
+      invalid = true;
+      return;
+    }
+    if (type === 'direct-started' && events.length && events[0]?.attemptId !== attemptId) reset();
+    if (role === null) role = nextRole;
+    if (role !== nextRole || (events.length && events[0]?.attemptId !== attemptId)) {
+      invalid = true;
+      return;
+    }
+    events.push({
+      sequence: events.length + 1,
+      type,
+      attemptId,
+      transport,
+      observedAtMs: Date.now(),
+    });
+  }
+
+  function snapshot() {
+    return {
+      schemaVersion: 1,
+      enabled: RELAY_EVIDENCE_MODE,
+      forcedRelay: FORCE_WORKER_RELAY,
+      origin: location.origin,
+      role,
+      invalid,
+      events: events.map((event) => ({ ...event })),
+    };
+  }
+
+  return {
+    reset,
+    directStarted({ attemptId, role: nextRole }) { record('direct-started', attemptId, nextRole, 'webrtc-direct'); },
+    directExhausted({ attemptId, role: nextRole }) { record('direct-exhausted', attemptId, nextRole, 'webrtc-direct'); },
+    relayConnected({ attemptId, role: nextRole }) { record('relay-connected', attemptId, nextRole, 'worker-relay'); },
+    transferComplete({ attemptId, role: nextRole, transport }) { record('transfer-complete', attemptId, nextRole, transport); },
+    snapshot,
+  };
+}
+
+export const relayEvidence = createRelayEvidenceJournal();
+if (RELAY_EVIDENCE_MODE) {
+  try {
+    Object.defineProperty(globalThis, 'FileQrRelayEvidence', {
+      configurable: true,
+      value: Object.freeze({
+        snapshot: () => relayEvidence.snapshot(),
+        exportJson: () => JSON.stringify(relayEvidence.snapshot(), null, 2),
+      }),
+    });
+  } catch { /* evidence observability must never affect transfer behavior */ }
+}
 
 export function freshAttempt() {
   return {
