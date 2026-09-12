@@ -26,6 +26,10 @@ function validRelaySecret(value) {
   }
 }
 
+function fragmentParams(url) {
+  return new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : '');
+}
+
 export function generateRelaySecret(fillRandom = (bytes) => crypto.getRandomValues(bytes)) {
   const bytes = new Uint8Array(RELAY_SECRET_BYTES);
   fillRandom(bytes);
@@ -39,8 +43,10 @@ export function buildReceivePayloadUrl(baseUrl, code, relaySecret) {
   const url = new URL(baseUrl);
   url.search = '';
   url.hash = '';
-  url.searchParams.set('receive', normalizedCode);
-  url.searchParams.set('relay', relaySecret);
+  const fragment = new URLSearchParams();
+  fragment.set('receive', normalizedCode);
+  fragment.set('relay', relaySecret);
+  url.hash = fragment.toString();
   return url.toString();
 }
 
@@ -58,13 +64,24 @@ export function parseReceivePayloadDetails(input) {
 
   try {
     const url = new URL(raw);
+    if (url.searchParams.has('relay')) return null;
+
+    const fragment = fragmentParams(url);
+    const fragmentHasReceive = fragment.has('receive');
+    const fragmentHasRelay = fragment.has('relay');
+    if (fragmentHasReceive || fragmentHasRelay) {
+      if (!fragmentHasReceive) return null;
+      const code = normalizeIfValid(fragment.get('receive'));
+      if (!code) return null;
+      if (!fragmentHasRelay) return { code, relaySecret: null };
+      const relaySecret = fragment.get('relay');
+      if (!validRelaySecret(relaySecret)) return null;
+      return { code, relaySecret };
+    }
+
     const receive = url.searchParams.get('receive');
     const code = receive ? normalizeIfValid(receive) : null;
-    if (!code) return null;
-    if (!url.searchParams.has('relay')) return { code, relaySecret: null };
-    const relaySecret = url.searchParams.get('relay');
-    if (!validRelaySecret(relaySecret)) return null;
-    return { code, relaySecret };
+    return code ? { code, relaySecret: null } : null;
   } catch {
     return null;
   }
