@@ -111,7 +111,7 @@ npm run verify
 Run the web client:
 
 ```bash
-VITE_SIGNALING_ORIGIN=https://your-worker.example.workers.dev npm --workspace @file-qr/web run dev -- --host 127.0.0.1 --port 5173 --strictPort
+VITE_SIGNALING_ORIGIN=https://your-worker.example.workers.dev npm --workspace @file-qr/web run dev
 ```
 
 Run the native UI:
