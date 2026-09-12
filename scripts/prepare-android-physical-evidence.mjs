@@ -38,11 +38,31 @@ async function fetchAndroidArtifact({ artifact, runId, outputDir }) {
   });
 }
 
+function sameArtifact(left, right) {
+  return left?.artifactId === right?.artifactId &&
+    left?.name === right?.name &&
+    left?.artifactDigest === right?.artifactDigest;
+}
+
+function assertBuildIdentityStable(admitted, observed) {
+  if (
+    admitted?.repository !== observed?.repository ||
+    admitted?.workflow !== observed?.workflow ||
+    admitted?.workflowRunId !== observed?.workflowRunId ||
+    admitted?.event !== observed?.event ||
+    admitted?.headBranch !== observed?.headBranch ||
+    admitted?.commitSha !== observed?.commitSha ||
+    !sameArtifact(admitted?.artifacts?.android, observed?.artifacts?.android)
+  ) {
+    fail('FQR_ANDROID_PHYSICAL_DRIFT', 'Native Builds Android artifact identity changed during materialization');
+  }
+}
+
 function clearOwnedPartial(outputDir, authorityPath) {
   if (fs.existsSync(authorityPath)) fs.unlinkSync(authorityPath);
   const apkPath = path.join(outputDir, APK_NAME);
   if (fs.existsSync(apkPath)) fs.unlinkSync(apkPath);
-  if (fs.existsSync(outputDir)) fs.rmdirSync(outputDir);
+  if (fs.existsSync(outputDir) && fs.readdirSync(outputDir).length === 0) fs.rmdirSync(outputDir);
 }
 
 export async function prepareAndroidPhysicalEvidence({
@@ -93,6 +113,8 @@ export async function prepareAndroidPhysicalEvidence({
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1) {
       fail('FQR_ANDROID_PHYSICAL_LAYOUT', 'canonical APK must be a non-empty regular file');
     }
+
+    assertBuildIdentityStable(build, resolveNativeBuild({ runId, execGh }));
 
     const observedAtValue = now();
     const observedAt = (observedAtValue instanceof Date ? observedAtValue : new Date(observedAtValue)).toISOString();
