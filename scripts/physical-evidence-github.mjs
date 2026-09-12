@@ -1,9 +1,14 @@
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const REPOSITORY = 'Nolane-x/file-qr';
 const WORKFLOW = 'Native Builds';
+const ANDROID_APK_NAME = 'FileQR-Android-arm64.apk';
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const SHA40 = /^[a-f0-9]{40}$/;
+const SHA64 = /^[a-f0-9]{64}$/;
 
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
@@ -44,6 +49,17 @@ function normalizeArtifact(artifact, expectedName, runId, headSha) {
     name: expectedName,
     artifactDigest: artifact.digest,
   };
+}
+
+async function hashFile(filePath) {
+  const hash = createHash('sha256');
+  await new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', resolve);
+  });
+  return hash.digest('hex');
 }
 
 export function resolveNativeBuild({ runId, execGh = defaultExecGh } = {}) {
@@ -89,6 +105,83 @@ export function resolveNativeBuild({ runId, execGh = defaultExecGh } = {}) {
     artifacts: {
       windows: normalizeArtifact(windowsMatches[0], 'file-qr-windows', runId, run.head_sha),
       android: normalizeArtifact(androidMatches[0], 'file-qr-android', runId, run.head_sha),
+    },
+  };
+}
+
+export async function verifyAndroidPhysicalArtifact({
+  runId,
+  artifactId,
+  archiveSha256,
+  apkPath,
+  controlSha,
+  execGh = defaultExecGh,
+} = {}) {
+  const normalizedControlSha = typeof controlSha === 'string' ? controlSha.toLowerCase() : '';
+  if (!SHA40.test(normalizedControlSha)) {
+    fail('FQR_EVIDENCE_BUILD_AUTHORITY', 'controlSha must be lowercase 40-hex');
+  }
+  if (!Number.isSafeInteger(artifactId) || artifactId < 1) {
+    fail('FQR_EVIDENCE_ARTIFACT_DRIFT', 'Android artifact id is invalid');
+  }
+  if (!SHA64.test(archiveSha256 || '')) {
+    fail('FQR_EVIDENCE_ARTIFACT_BYTES', 'Android archive SHA-256 is invalid');
+  }
+  if (typeof apkPath !== 'string' || path.basename(apkPath) !== ANDROID_APK_NAME) {
+    fail('FQR_EVIDENCE_ARTIFACT_LAYOUT', `Android artifact must contain ${ANDROID_APK_NAME}`);
+  }
+
+  const build = resolveNativeBuild({ runId, execGh });
+  if (build.commitSha !== normalizedControlSha) {
+    fail('FQR_EVIDENCE_BUILD_AUTHORITY', 'trusted control HEAD must equal the admitted Native Builds commit');
+  }
+
+  const artifact = build.artifacts.android;
+  if (artifact.artifactId !== artifactId) {
+    fail('FQR_EVIDENCE_ARTIFACT_DRIFT', 'Android artifact id changed after admission');
+  }
+  if (artifact.artifactDigest !== `sha256:${archiveSha256}`) {
+    fail('FQR_EVIDENCE_ARTIFACT_BYTES', 'downloaded Android archive does not match GitHub artifact digest');
+  }
+
+  const artifactDir = path.dirname(apkPath);
+  let entries;
+  let stat;
+  try {
+    entries = fs.readdirSync(artifactDir, { withFileTypes: true });
+    stat = fs.lstatSync(apkPath);
+  } catch {
+    fail('FQR_EVIDENCE_ARTIFACT_LAYOUT', 'canonical Android APK is missing');
+  }
+  if (
+    entries.length !== 1 ||
+    entries[0].name !== ANDROID_APK_NAME ||
+    !entries[0].isFile() ||
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.size < 1
+  ) {
+    fail('FQR_EVIDENCE_ARTIFACT_LAYOUT', `Android artifact must contain exactly one non-empty ${ANDROID_APK_NAME}`);
+  }
+
+  const apkSha256 = await hashFile(apkPath);
+  return {
+    schemaVersion: 1,
+    repository: build.repository,
+    workflow: build.workflow,
+    workflowRunId: build.workflowRunId,
+    event: build.event,
+    headBranch: build.headBranch,
+    commitSha: build.commitSha,
+    artifact: {
+      artifactId: artifact.artifactId,
+      name: artifact.name,
+      artifactDigest: artifact.artifactDigest,
+    },
+    apk: {
+      name: ANDROID_APK_NAME,
+      bytes: stat.size,
+      sha256: apkSha256,
     },
   };
 }
