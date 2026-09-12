@@ -25,6 +25,17 @@ test('self-hosted Android evidence refuses non-main dispatch refs and checks out
   assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\b[^\n]*[\s\S]*?with:\s*\n\s*ref:\s*main/);
 });
 
+test('physical Android evidence binds the installed APK to one authoritative Native Builds main run', () => {
+  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+
+  assert.match(workflow, /native_run_id:/);
+  assert.doesNotMatch(workflow, /release_tag:/);
+  assert.match(workflow, /prepare-android-physical-evidence\.mjs/);
+  assert.match(workflow, /FILE_QR_ANDROID_AUTHORITY_PATH:\s*android-physical-authority\.json/);
+  assert.match(workflow, /FILE_QR_APK:\s*trusted-android-artifact\/FileQR-Android-arm64\.apk/);
+  assert.match(workflow, /android-physical-authority\.json/);
+});
+
 test('physical Android collector proves a non-emulator camera path without recording camera imagery', () => {
   assert.ok(fs.existsSync(collectorUrl), 'physical Android evidence collector must exist');
   const source = fs.readFileSync(collectorUrl, 'utf8');
