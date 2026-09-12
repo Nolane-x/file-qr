@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readWebRuntimeSource } from '../helpers/web-runtime-source.mjs';
+
+const runtime = readWebRuntimeSource();
 
 test('web UI exposes send, receive, downloads and accessible status', () => {
   const html = fs.readFileSync(new URL('../../apps/web/index.html', import.meta.url), 'utf8');
@@ -17,22 +20,26 @@ test('web receive UI exposes paste and camera scanner hooks', () => {
 });
 
 test('web state copy includes every release-critical state', () => {
-  const js = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
   for (const state of ['idle','preparing','ready','connecting','sending','receiving','verifying','done','expired','cancelled','failed','unsupported']) {
-    assert.ok(js.includes(state), `missing state ${state}`);
+    assert.ok(runtime.includes(state), `missing state ${state}`);
   }
 });
 
 test('web signaling buffers remote ICE until a remote description exists', () => {
-  const source = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
-  assert.ok(source.includes('await candidateBuffer.add(message.candidate)'));
-  assert.ok(!source.includes('await peer.addIceCandidate(message.candidate)'));
+  assert.ok(runtime.includes('await candidateBuffer.add(message.candidate)'));
+  assert.ok(!runtime.includes('await peer.addIceCandidate(message.candidate)'));
 });
 
-test('web main orchestrates scanner parsing, wake lock, ETA and bounded connection timeout', () => {
-  const source = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
+test('composed web runtime orchestrates scanner parsing, wake lock, ETA and bounded connection timeout', () => {
   for (const token of ["from './receive-payload.js'", "from './scanner.js'", "from './wake-lock.js'", "from './progress.js'", '30_000', 'connectionState', 'pagehide']) {
-    assert.ok(source.includes(token), `missing integration token ${token}`);
+    assert.ok(runtime.includes(token), `missing integration token ${token}`);
   }
-  assert.ok(source.includes('Not a File QR receive code.'));
+  assert.ok(runtime.includes('Not a File QR receive code.'));
+});
+
+test('main entrypoint stays thin while runtime responsibilities remain focused', () => {
+  const main = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
+  assert.match(main, /runtime-ui\.js/);
+  assert.match(main, /bootstrapFileQrUi\(\)/);
+  assert.ok(main.split('\n').length < 12, 'main.js must remain a thin composition root');
 });
