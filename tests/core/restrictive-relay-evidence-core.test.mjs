@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -113,6 +114,50 @@ test('file finalizer reads endpoint journals and atomically publishes only valid
       execGh: execForDeploy(),
     }), /forced relay/i);
     assert.equal(fs.existsSync(invalidOutput), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('operator CLI resolves live deploy authority and writes a validated restrictive-relay PASS record', () => {
+  const cliPath = path.resolve('scripts/finalize-restrictive-relay-evidence.mjs');
+  assert.equal(fs.existsSync(cliPath), true, 'operator finalizer CLI must exist');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileqr-relay-cli-'));
+  try {
+    const binDir = path.join(dir, 'bin');
+    fs.mkdirSync(binDir);
+    const fakeGh = path.join(binDir, 'gh');
+    fs.writeFileSync(fakeGh, `#!/usr/bin/env node\nconst endpoint = process.argv[3] || '';\nconst sha = '${SHA}';\nif (endpoint.endsWith('/branches/main')) {\n  process.stdout.write(JSON.stringify({ name: 'main', commit: { sha } }));\n} else {\n  process.stdout.write(JSON.stringify({ id: 123, name: 'Deploy Web', event: 'push', head_branch: 'main', head_sha: sha, status: 'completed', conclusion: 'success', repository: { full_name: 'Nolane-x/file-qr' } }));\n}\n`);
+    fs.chmodSync(fakeGh, 0o755);
+
+    const senderPath = path.join(dir, 'sender.json');
+    const receiverPath = path.join(dir, 'receiver.json');
+    const outputPath = path.join(dir, 'proof.json');
+    fs.writeFileSync(senderPath, JSON.stringify(journal('sender')));
+    fs.writeFileSync(receiverPath, JSON.stringify(journal('receiver')));
+
+    const result = spawnSync(process.execPath, [
+      cliPath,
+      '--deploy-run-id', '123',
+      '--production-origin', ORIGIN,
+      '--source-sha256', HASH,
+      '--received-sha256', HASH,
+      '--sender', senderPath,
+      '--receiver', receiverPath,
+      '--output', outputPath,
+    ], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH || ''}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /PASS/);
+    const record = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    assert.equal(record.result, 'PASS');
+    assert.equal(record.sourceCommit, SHA);
+    assert.equal(record.deployRunId, 123);
+    assert.equal(record.forcedRelay, false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
