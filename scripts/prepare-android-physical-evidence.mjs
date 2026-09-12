@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveNativeBuild } from './physical-evidence-github.mjs';
+import {
+  currentHeadSha,
+  defaultArtifactFetcher,
+} from './prepare-optical-physical-evidence.mjs';
 
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA64 = /^[a-f0-9]{64}$/;
@@ -24,6 +29,15 @@ async function hashFile(filePath) {
   return hash.digest('hex');
 }
 
+async function fetchAndroidArtifact({ artifact, runId, outputDir }) {
+  return defaultArtifactFetcher({
+    platform: 'android',
+    artifact,
+    runId,
+    destinationDir: outputDir,
+  });
+}
+
 function clearOwnedPartial(outputDir, authorityPath) {
   if (fs.existsSync(authorityPath)) fs.unlinkSync(authorityPath);
   const apkPath = path.join(outputDir, APK_NAME);
@@ -37,7 +51,7 @@ export async function prepareAndroidPhysicalEvidence({
   authorityPath,
   execGh,
   controlSha,
-  artifactFetcher,
+  artifactFetcher = fetchAndroidArtifact,
   now = () => new Date(),
 } = {}) {
   if (!Number.isSafeInteger(runId) || runId < 1) fail('FQR_ANDROID_PHYSICAL_INPUT', 'runId must be a positive integer');
@@ -49,7 +63,8 @@ export async function prepareAndroidPhysicalEvidence({
   }
 
   const build = resolveNativeBuild({ runId, execGh });
-  if (!SHA40.test(controlSha || '') || controlSha !== build.commitSha) {
+  const trustedControlSha = controlSha ?? currentHeadSha();
+  if (!SHA40.test(trustedControlSha || '') || trustedControlSha !== build.commitSha) {
     fail('FQR_ANDROID_PHYSICAL_AUTHORITY', 'trusted control HEAD must equal the admitted Native Builds commit');
   }
 
@@ -96,10 +111,46 @@ export async function prepareAndroidPhysicalEvidence({
       observedAt,
     };
 
-    fs.writeFileSync(authorityPath, `${JSON.stringify(authority, null, 2)}\n`, { mode: 0o600 });
+    fs.writeFileSync(authorityPath, `${JSON.stringify(authority, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
     return authority;
   } catch (error) {
     clearOwnedPartial(outputDir, authorityPath);
     throw error;
+  }
+}
+
+function parseCliArgs(argv) {
+  const values = new Map();
+  const allowed = new Set(['--run-id', '--output-dir', '--authority']);
+  for (let index = 0; index < argv.length; index += 2) {
+    const flag = argv[index];
+    const value = argv[index + 1];
+    if (!allowed.has(flag) || value === undefined || values.has(flag)) {
+      fail('FQR_ANDROID_PHYSICAL_INPUT', 'expected --run-id <id> --output-dir <dir> --authority <file>');
+    }
+    values.set(flag, value);
+  }
+  const runIdText = values.get('--run-id') || '';
+  if (values.size !== 3 || !/^\d+$/.test(runIdText)) {
+    fail('FQR_ANDROID_PHYSICAL_INPUT', 'expected --run-id <id> --output-dir <dir> --authority <file>');
+  }
+  const runId = Number(runIdText);
+  if (!Number.isSafeInteger(runId) || runId < 1) {
+    fail('FQR_ANDROID_PHYSICAL_INPUT', 'runId must be a positive integer');
+  }
+  return {
+    runId,
+    outputDir: values.get('--output-dir'),
+    authorityPath: values.get('--authority'),
+  };
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const authority = await prepareAndroidPhysicalEvidence(parseCliArgs(process.argv.slice(2)));
+    console.log(`Android physical build authority: PASS (run ${authority.workflowRunId}, apk ${authority.apkSha256})`);
+  } catch (error) {
+    console.error(error?.message || String(error));
+    process.exitCode = 1;
   }
 }
