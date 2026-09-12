@@ -147,10 +147,12 @@ export async function runWorkerRelayProbe({
     assert.ok(receiveUrl, 'sender must expose a structured receive link through Copy link');
 
     const receive = new URL(receiveUrl);
+    const fragment = new URLSearchParams(receive.hash.startsWith('#') ? receive.hash.slice(1) : '');
     assert.equal(receive.origin, base.origin, 'receive URL must stay on the tested web origin');
     assert.equal(receive.searchParams.get('forceRelay'), '1', 'receive URL must preserve evidence-only force relay mode');
-    assert.match(receive.searchParams.get('receive') || '', /^[0-9A-Z]{5}-[0-9A-Z]{5}$/);
-    assert.match(receive.searchParams.get('relay') || '', /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(receive.searchParams.has('relay'), false, 'relay secret must never be carried in the HTTP query');
+    assert.match(fragment.get('receive') || '', /^[0-9A-Z]{5}-[0-9A-Z]{5}$/);
+    assert.match(fragment.get('relay') || '', /^[A-Za-z0-9_-]{43}$/);
 
     const downloadPromise = receiver.waitForEvent('download', { timeout: 60_000 });
     await receiver.goto(receive.toString(), { waitUntil: 'domcontentloaded' });
@@ -160,6 +162,7 @@ export async function runWorkerRelayProbe({
       null,
       { timeout: 30_000 },
     );
+    await receiver.waitForFunction(() => location.hash === '', null, { timeout: 5_000 });
 
     const outcome = await waitForDownloadOrFailure(receiver, downloadPromise, 30_000);
     if (outcome?.kind !== 'download') {
