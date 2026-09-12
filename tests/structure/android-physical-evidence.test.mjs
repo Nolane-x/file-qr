@@ -36,7 +36,7 @@ test('physical Android evidence binds the installed APK to one authoritative Nat
   assert.match(workflow, /FILE_QR_ANDROID_AUTHORITY_PATH:\s*android-physical-authority\.json/);
   assert.match(workflow, /FILE_QR_APK:\s*trusted-android-artifact\/FileQR-Android-arm64\.apk/);
   assert.match(workflow, /android-physical-authority\.json/);
-  assert.match(workflow, /apkSha256[\s\S]*authority\.apk\.sha256/);
+  assert.match(workflow, /x\.apkSha256\s*!==\s*authority\?\.apk\?\.sha256/);
 });
 
 test('physical Android collector proves a non-emulator camera path without recording camera imagery', () => {
