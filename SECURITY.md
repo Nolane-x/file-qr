@@ -72,6 +72,6 @@ Production operators should terminate signaling/relay traffic over HTTPS/WSS, ke
 
 The checked-in main branch must not be described as shipping production-trusted native signatures until the real publisher credential paths have executed and post-build signature identity verification has passed. Preview build success is packaging evidence, not publisher-authenticity evidence.
 
-Likewise, neither optional TURN support nor hosted Worker-relay evidence should be promoted beyond the evidence actually collected. Physical restrictive-network behavior remains a separate empirical gate.
+Likewise, neither optional TURN support nor hosted Worker-relay evidence should be promoted beyond the evidence actually collected. **Do not claim restrictive-network relay behavior production-ready** until the separate physical restrictive-network evidence gate passes.
 
 Please report security issues privately to the repository owner rather than posting exploit details in a public issue.
