@@ -24,6 +24,13 @@ async function hashFile(filePath) {
   return hash.digest('hex');
 }
 
+function clearOwnedPartial(outputDir, authorityPath) {
+  if (fs.existsSync(authorityPath)) fs.unlinkSync(authorityPath);
+  const apkPath = path.join(outputDir, APK_NAME);
+  if (fs.existsSync(apkPath)) fs.unlinkSync(apkPath);
+  if (fs.existsSync(outputDir)) fs.rmdirSync(outputDir);
+}
+
 export async function prepareAndroidPhysicalEvidence({
   runId,
   outputDir,
@@ -37,54 +44,62 @@ export async function prepareAndroidPhysicalEvidence({
   if (typeof outputDir !== 'string' || outputDir.length === 0) fail('FQR_ANDROID_PHYSICAL_INPUT', 'outputDir is required');
   if (typeof authorityPath !== 'string' || authorityPath.length === 0) fail('FQR_ANDROID_PHYSICAL_INPUT', 'authorityPath is required');
   if (typeof artifactFetcher !== 'function') fail('FQR_ANDROID_PHYSICAL_FETCH', 'artifactFetcher must be callable');
+  if (fs.existsSync(outputDir) || fs.existsSync(authorityPath)) {
+    fail('FQR_ANDROID_PHYSICAL_INPUT', 'outputDir and authorityPath must not already exist');
+  }
 
   const build = resolveNativeBuild({ runId, execGh });
   if (!SHA40.test(controlSha || '') || controlSha !== build.commitSha) {
     fail('FQR_ANDROID_PHYSICAL_AUTHORITY', 'trusted control HEAD must equal the admitted Native Builds commit');
   }
 
-  const artifact = build.artifacts.android;
-  const fetched = await artifactFetcher({ artifact, runId, outputDir });
-  if (!fetched || !SHA64.test(fetched.archiveSha256 || '')) {
-    fail('FQR_ANDROID_PHYSICAL_BYTES', 'artifact fetch did not report a valid archive SHA-256');
-  }
-  if (`sha256:${fetched.archiveSha256}` !== artifact.artifactDigest) {
-    fail('FQR_ANDROID_PHYSICAL_BYTES', 'downloaded Android archive does not match GitHub artifact digest');
-  }
-
-  let entries;
   try {
-    entries = fs.readdirSync(outputDir, { withFileTypes: true });
-  } catch {
-    fail('FQR_ANDROID_PHYSICAL_LAYOUT', 'artifact extraction directory is missing');
-  }
-  if (entries.length !== 1 || entries[0].name !== APK_NAME || !entries[0].isFile()) {
-    fail('FQR_ANDROID_PHYSICAL_LAYOUT', `artifact must contain exactly ${APK_NAME}`);
-  }
+    const artifact = build.artifacts.android;
+    const fetched = await artifactFetcher({ artifact, runId, outputDir });
+    if (!fetched || !SHA64.test(fetched.archiveSha256 || '')) {
+      fail('FQR_ANDROID_PHYSICAL_BYTES', 'artifact fetch did not report a valid archive SHA-256');
+    }
+    if (`sha256:${fetched.archiveSha256}` !== artifact.artifactDigest) {
+      fail('FQR_ANDROID_PHYSICAL_BYTES', 'downloaded Android archive does not match GitHub artifact digest');
+    }
 
-  const apkPath = path.join(outputDir, APK_NAME);
-  const stat = fs.lstatSync(apkPath);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1) {
-    fail('FQR_ANDROID_PHYSICAL_LAYOUT', 'canonical APK must be a non-empty regular file');
+    let entries;
+    try {
+      entries = fs.readdirSync(outputDir, { withFileTypes: true });
+    } catch {
+      fail('FQR_ANDROID_PHYSICAL_LAYOUT', 'artifact extraction directory is missing');
+    }
+    if (entries.length !== 1 || entries[0].name !== APK_NAME || !entries[0].isFile()) {
+      fail('FQR_ANDROID_PHYSICAL_LAYOUT', `artifact must contain exactly ${APK_NAME}`);
+    }
+
+    const apkPath = path.join(outputDir, APK_NAME);
+    const stat = fs.lstatSync(apkPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1) {
+      fail('FQR_ANDROID_PHYSICAL_LAYOUT', 'canonical APK must be a non-empty regular file');
+    }
+
+    const observedAtValue = now();
+    const observedAt = (observedAtValue instanceof Date ? observedAtValue : new Date(observedAtValue)).toISOString();
+    const authority = {
+      schemaVersion: 1,
+      repository: build.repository,
+      workflow: build.workflow,
+      workflowRunId: build.workflowRunId,
+      commitSha: build.commitSha,
+      artifactId: artifact.artifactId,
+      artifactName: artifact.name,
+      artifactDigest: artifact.artifactDigest,
+      archiveSha256: fetched.archiveSha256,
+      apkSha256: await hashFile(apkPath),
+      apkBytes: stat.size,
+      observedAt,
+    };
+
+    fs.writeFileSync(authorityPath, `${JSON.stringify(authority, null, 2)}\n`, { mode: 0o600 });
+    return authority;
+  } catch (error) {
+    clearOwnedPartial(outputDir, authorityPath);
+    throw error;
   }
-
-  const observedAtValue = now();
-  const observedAt = (observedAtValue instanceof Date ? observedAtValue : new Date(observedAtValue)).toISOString();
-  const authority = {
-    schemaVersion: 1,
-    repository: build.repository,
-    workflow: build.workflow,
-    workflowRunId: build.workflowRunId,
-    commitSha: build.commitSha,
-    artifactId: artifact.artifactId,
-    artifactName: artifact.name,
-    artifactDigest: artifact.artifactDigest,
-    archiveSha256: fetched.archiveSha256,
-    apkSha256: await hashFile(apkPath),
-    apkBytes: stat.size,
-    observedAt,
-  };
-
-  fs.writeFileSync(authorityPath, `${JSON.stringify(authority, null, 2)}\n`, { mode: 0o600 });
-  return authority;
 }
