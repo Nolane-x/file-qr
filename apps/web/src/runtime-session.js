@@ -4,6 +4,7 @@ import { buildReceivePayloadUrl, generateRelaySecret } from './receive-payload.j
 import { createTransportPolicy } from './transport-policy.js';
 import {
   FORCE_WORKER_RELAY,
+  RELAY_EVIDENCE_MODE,
   SIGNALING_ORIGIN,
   SIGNAL_RETRY_MS,
   cleanupLease,
@@ -12,6 +13,7 @@ import {
   freshAttempt,
   handleLeaseExpiry,
   leaseOpen,
+  relayEvidence,
   renderSessionMeta,
   resetProgress,
   setState,
@@ -103,6 +105,7 @@ export async function ensureSenderSignal() {
 
 export async function sendFile(file) {
   await cleanupLease();
+  relayEvidence.reset();
   resetProgress();
   const active = current();
   active.role = 'sender';
@@ -124,6 +127,7 @@ export async function sendFile(file) {
 
     const receivePayloadUrl = new URL(buildReceivePayloadUrl(location.href, session.code, current().relaySecret));
     if (FORCE_WORKER_RELAY) receivePayloadUrl.searchParams.set('forceRelay', '1');
+    if (RELAY_EVIDENCE_MODE) receivePayloadUrl.searchParams.set('relayEvidence', '1');
     current().receiveUrl = receivePayloadUrl.toString();
     renderSessionMeta(file, session.code, current().receiveUrl);
     setState('ready', 'Waiting for a receiver. Scan the QR for secure relay fallback; the code remains available for the full 10-minute window.');
@@ -146,6 +150,7 @@ export async function receiveFile(rawCode, relaySecret = null) {
   }
 
   await cleanupLease({ discardPartial: false });
+  relayEvidence.reset();
   resetProgress();
   current().role = 'receiver';
   current().code = code;
