@@ -30,7 +30,7 @@ A manually typed receive code has no QR relay secret and therefore cannot silent
 
 ### Structured QR secret and admission authority
 
-When a sender lease is created, the browser generates an independent 32-byte (256-bit) random relay secret. The structured receive URL carries it as the `relay` query value alongside the receive code. The secret is base64url without padding and is intended to travel only through the QR/link. The signaling service does not need the relay secret for admission and does not persist it.
+When a sender lease is created, the browser generates an independent 32-byte (256-bit) random relay secret. The structured receive URL carries the receive code and relay secret in the **URL fragment** (`#receive=...&relay=...`), not in the HTTP query. URL fragments are not included in the navigation request to the web origin, so the relay secret is not transmitted to the web server merely by opening the QR/link. The receiver parses the fragment locally and immediately scrubs that fragment from the browser-visible URL before starting the transfer. Legacy `?receive=...` remains code-only compatibility input; any `relay` value supplied in the HTTP query is rejected fail-closed. The secret is base64url without padding and is intended to travel only through the QR/link. The signaling service does not need the relay secret for admission and does not persist it.
 
 Server admission uses a different authority. Every receiver attempt gets role-specific opaque relay capabilities bound to the live lease and exact `attemptId`. The receiver capability is returned with its signaling `connected` handshake; the sender capability is delivered in the matching `peer-ready`. The Durable Object stores only capability hashes. Raw capabilities are not persisted.
 
@@ -90,7 +90,7 @@ The sender owns ICE restart to avoid offer glare. A disconnected state receives 
 
 ## Hosted Worker-relay evidence
 
-Browser Reliability starts local Wrangler signaling and Vite web runtimes and performs an explicit `forceRelay=1` transfer with fresh random bytes. It observes the dedicated `/relay` WebSocket on both peers and requires independent source and received SHA-256 equality.
+Browser Reliability starts local Wrangler signaling and Vite web runtimes and performs an explicit `forceRelay=1` transfer with fresh random bytes. It observes the dedicated `/relay` WebSocket on both peers and requires independent source and received SHA-256 equality. The test additionally requires the QR relay authority to reside in the URL fragment and verifies that the receiving page scrubs that fragment after consuming it.
 
 After this implementation is integrated and deployed from trusted `main`, the manual `Worker Relay Evidence` workflow repeats the proof against `https://fileqr.nolane-file.workers.dev`. Its artifact contains only sanitized result metadata and hashes; receive codes, sender tokens, relay capabilities, QR relay secrets, client IPs and file bytes are excluded.
 
