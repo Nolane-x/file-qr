@@ -11,6 +11,7 @@ test('receive payload parser accepts codes and receive URLs only', async () => {
   assert.equal(parseReceivePayload('ABCDEFGHJK'), 'ABCDE-FGHJK');
   assert.equal(parseReceivePayload('https://fileqr.nolane-file.workers.dev/?receive=ABCDEFGHJK'), 'ABCDE-FGHJK');
   assert.equal(parseReceivePayload('https://example.com/path?receive=ABCDE-FGHJK'), 'ABCDE-FGHJK');
+  assert.equal(parseReceivePayload('https://example.com/path#receive=ABCDE-FGHJK'), 'ABCDE-FGHJK');
   assert.equal(parseReceivePayload('https://example.com/path'), null);
   assert.equal(parseReceivePayload('https://example.com/?receive=bad'), null);
   assert.equal(parseReceivePayload('not a code'), null);
@@ -22,9 +23,10 @@ test('receive URL parser rejects overlong receive-code aliases before normalizat
   assert.equal(parseReceivePayload('ABCDE-FGHJKX'), null);
   assert.equal(parseReceivePayload('https://example.com/?receive=ABCDE-FGHJKX'), null);
   assert.equal(parseReceivePayload('https://example.com/?receive=ABCDE-FGHJK-EXTRA'), null);
+  assert.equal(parseReceivePayload('https://example.com/#receive=ABCDE-FGHJKX'), null);
 });
 
-test('structured receive payload carries a strict QR-only relay secret without breaking legacy parsing', async () => {
+test('structured receive payload keeps QR relay secret in URL fragment so HTTP requests cannot carry it', async () => {
   const {
     buildReceivePayloadUrl,
     parseReceivePayload,
@@ -33,7 +35,11 @@ test('structured receive payload carries a strict QR-only relay secret without b
 
   const secret = 'A'.repeat(43);
   const built = buildReceivePayloadUrl('https://fileqr.example/send?old=1', 'ABCDEFGHJK', secret);
-  assert.equal(built, `https://fileqr.example/send?receive=ABCDE-FGHJK&relay=${secret}`);
+  assert.equal(built, `https://fileqr.example/send#receive=ABCDE-FGHJK&relay=${secret}`);
+  const url = new URL(built);
+  assert.equal(url.search, '', 'structured receive payload must not put relay authority in the HTTP query');
+  assert.equal(url.searchParams.has('relay'), false);
+  assert.equal(url.hash.includes(secret), true);
   assert.deepEqual(parseReceivePayloadDetails(built), {
     code: 'ABCDE-FGHJK',
     relaySecret: secret,
@@ -45,8 +51,14 @@ test('structured receive payload carries a strict QR-only relay secret without b
   });
 });
 
-test('structured receive payload rejects malformed relay secrets instead of silently downgrading', async () => {
+test('structured receive payload rejects query-carried or malformed relay secrets instead of silently downgrading', async () => {
   const { parseReceivePayloadDetails } = await import(moduleUrl);
+  const validSecret = 'A'.repeat(43);
+  assert.equal(
+    parseReceivePayloadDetails(`https://fileqr.example/?receive=ABCDE-FGHJK&relay=${validSecret}`),
+    null,
+    'relay secrets in query strings must be rejected because query strings are sent to the HTTP origin',
+  );
   for (const relay of [
     '',
     'A'.repeat(42),
@@ -55,7 +67,7 @@ test('structured receive payload rejects malformed relay secrets instead of sile
     `${'A'.repeat(42)}+`,
     `${'A'.repeat(42)}/`,
   ]) {
-    const url = `https://fileqr.example/?receive=ABCDE-FGHJK&relay=${encodeURIComponent(relay)}`;
+    const url = `https://fileqr.example/#receive=ABCDE-FGHJK&relay=${encodeURIComponent(relay)}`;
     assert.equal(parseReceivePayloadDetails(url), null);
   }
 });
