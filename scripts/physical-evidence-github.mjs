@@ -297,6 +297,22 @@ function atomicWriteRelayEvidence(outputPath, record) {
   }
 }
 
+function prepareRelayEvidenceOutput(outputPath, senderPath, receiverPath) {
+  if (typeof outputPath !== 'string' || outputPath.length === 0) fail('FQR_EVIDENCE_FILE', 'output path is required');
+  const resolvedOutput = path.resolve(outputPath);
+  for (const inputPath of [senderPath, receiverPath]) {
+    if (typeof inputPath === 'string' && inputPath.length > 0 && path.resolve(inputPath) === resolvedOutput) {
+      fail('FQR_EVIDENCE_FILE', 'output path must differ from endpoint journal paths');
+    }
+  }
+  try {
+    fs.rmSync(outputPath, { force: true });
+    fs.rmSync(`${outputPath}.tmp-${process.pid}`, { force: true });
+  } catch (error) {
+    fail('FQR_EVIDENCE_FILE', error?.message || 'could not clear previous restrictive relay evidence');
+  }
+}
+
 export function finalizeRestrictiveRelayEvidenceFiles({
   deployRunId,
   productionOrigin,
@@ -307,6 +323,7 @@ export function finalizeRestrictiveRelayEvidenceFiles({
   outputPath,
   execGh = defaultExecGh,
 } = {}) {
+  prepareRelayEvidenceOutput(outputPath, senderPath, receiverPath);
   const sender = readRelayEvidenceFile(senderPath, 'sender journal');
   const receiver = readRelayEvidenceFile(receiverPath, 'receiver journal');
   const record = finalizeRestrictiveRelayEvidence({
