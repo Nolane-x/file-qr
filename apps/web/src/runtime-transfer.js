@@ -65,6 +65,11 @@ export async function handleSenderControlMessage(message, attemptId, streamFromO
       : `${relayed ? 'Relayed securely. Sending' : 'Sending'} ${active.file.name} to the receiver.`);
     updateProgress(offset, active.file.size, offset > 0 ? 'Resuming' : 'Sending');
     try {
+      if (relayed) {
+        const transport = active.attempt.relayTransport;
+        if (!transport) throw new Error('Secure relay transport is unavailable');
+        await transport.declareRemaining(active.file.size - offset);
+      }
       await streamFromOffset(offset);
       if (current().attempt.id === attemptId) {
         setState('verifying', 'All bytes sent. Waiting for the receiver to confirm the completed file.');
