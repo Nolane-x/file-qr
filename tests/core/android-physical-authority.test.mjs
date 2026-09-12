@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const helperUrl = new URL('../../scripts/prepare-android-physical-evidence.mjs', import.meta.url);
+const moduleUrl = new URL('../../scripts/physical-evidence-github.mjs', import.meta.url);
 const SHA = 'a'.repeat(40);
 const archiveSha = createHash('sha256').update('android-archive').digest('hex');
 const apkBytes = Buffer.from('trusted-android-apk');
@@ -24,74 +24,51 @@ function execGh(endpoint) {
   });
 }
 
-function artifactFetcher({ destinationDir }) {
-  fs.mkdirSync(destinationDir, { recursive: false, mode: 0o700 });
-  fs.writeFileSync(path.join(destinationDir, 'FileQR-Android-arm64.apk'), apkBytes, { mode: 0o600 });
-  return { archiveSha256: archiveSha };
-}
-
-test('Android physical authority materializes only the exact main Native Builds APK and writes sanitized binding', async () => {
-  assert.ok(fs.existsSync(helperUrl), 'Android physical authority helper must exist');
-  const { prepareAndroidPhysicalAuthority } = await import(helperUrl);
+test('Android physical authority verifies exact main run, artifact identity, archive bytes and APK bytes', async () => {
+  const module = await import(moduleUrl);
+  assert.equal(typeof module.verifyAndroidPhysicalArtifact, 'function');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fileqr-android-authority-'));
-  const destinationDir = path.join(root, 'trusted-android-artifact');
-  const authorityPath = path.join(root, 'android-physical-authority.json');
+  const apkPath = path.join(root, 'FileQR-Android-arm64.apk');
+  fs.writeFileSync(apkPath, apkBytes, { mode: 0o600 });
 
-  const result = await prepareAndroidPhysicalAuthority({
+  const authority = await module.verifyAndroidPhysicalArtifact({
     runId: 123,
-    destinationDir,
-    authorityPath,
+    artifactId: 11,
+    archiveSha256: archiveSha,
+    apkPath,
     controlSha: SHA,
     execGh,
-    artifactFetcher,
   });
 
-  assert.equal(result.apkPath, path.join(destinationDir, 'FileQR-Android-arm64.apk'));
-  assert.equal(result.authority.commitSha, SHA);
-  assert.equal(result.authority.workflowRunId, 123);
-  assert.deepEqual(result.authority.artifact, {
+  assert.equal(authority.schemaVersion, 1);
+  assert.equal(authority.commitSha, SHA);
+  assert.equal(authority.workflowRunId, 123);
+  assert.deepEqual(authority.artifact, {
     artifactId: 11,
     name: 'file-qr-android',
     artifactDigest: `sha256:${archiveSha}`,
   });
-  assert.deepEqual(result.authority.apk, {
+  assert.deepEqual(authority.apk, {
     name: 'FileQR-Android-arm64.apk',
     bytes: apkBytes.length,
     sha256: apkSha,
   });
-  assert.deepEqual(JSON.parse(fs.readFileSync(authorityPath, 'utf8')), result.authority);
-  const json = fs.readFileSync(authorityPath, 'utf8');
-  assert.doesNotMatch(json, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(JSON.stringify(authority), new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
-test('Android physical authority fails closed on wrong control head or archive digest and leaves no authority file', async () => {
-  assert.ok(fs.existsSync(helperUrl), 'Android physical authority helper must exist');
-  const { prepareAndroidPhysicalAuthority } = await import(helperUrl);
+test('Android physical authority fails closed on wrong control head, artifact id, archive digest and APK layout', async () => {
+  const module = await import(moduleUrl);
+  assert.equal(typeof module.verifyAndroidPhysicalArtifact, 'function');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fileqr-android-authority-fail-'));
+  const apkPath = path.join(root, 'FileQR-Android-arm64.apk');
+  fs.writeFileSync(apkPath, apkBytes, { mode: 0o600 });
+  const base = { runId: 123, artifactId: 11, archiveSha256: archiveSha, apkPath, controlSha: SHA, execGh };
 
-  await assert.rejects(() => prepareAndroidPhysicalAuthority({
-    runId: 123,
-    destinationDir: path.join(root, 'wrong-head'),
-    authorityPath: path.join(root, 'wrong-head.json'),
-    controlSha: 'b'.repeat(40),
-    execGh,
-    artifactFetcher,
-  }), /FQR_EVIDENCE_BUILD_AUTHORITY/);
+  await assert.rejects(() => module.verifyAndroidPhysicalArtifact({ ...base, controlSha: 'b'.repeat(40) }), /FQR_EVIDENCE_BUILD_AUTHORITY/);
+  await assert.rejects(() => module.verifyAndroidPhysicalArtifact({ ...base, artifactId: 99 }), /FQR_EVIDENCE_ARTIFACT_DRIFT/);
+  await assert.rejects(() => module.verifyAndroidPhysicalArtifact({ ...base, archiveSha256: 'f'.repeat(64) }), /FQR_EVIDENCE_ARTIFACT_BYTES/);
 
-  const badAuthority = path.join(root, 'bad-digest.json');
-  const badDestination = path.join(root, 'bad-digest');
-  await assert.rejects(() => prepareAndroidPhysicalAuthority({
-    runId: 123,
-    destinationDir: badDestination,
-    authorityPath: badAuthority,
-    controlSha: SHA,
-    execGh,
-    artifactFetcher: ({ destinationDir: dir }) => {
-      fs.mkdirSync(dir, { recursive: false, mode: 0o700 });
-      fs.writeFileSync(path.join(dir, 'FileQR-Android-arm64.apk'), apkBytes, { mode: 0o600 });
-      return { archiveSha256: 'f'.repeat(64) };
-    },
-  }), /FQR_EVIDENCE_ARTIFACT_BYTES/);
-  assert.equal(fs.existsSync(badAuthority), false);
-  assert.equal(fs.existsSync(badDestination), false);
+  const wrongName = path.join(root, 'other.apk');
+  fs.writeFileSync(wrongName, apkBytes, { mode: 0o600 });
+  await assert.rejects(() => module.verifyAndroidPhysicalArtifact({ ...base, apkPath: wrongName }), /FQR_EVIDENCE_ARTIFACT_LAYOUT/);
 });
