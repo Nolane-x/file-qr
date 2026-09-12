@@ -3,13 +3,13 @@ name: Android Physical Evidence
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: GitHub release tag containing FileQR-Android-arm64.apk
+      native_run_id:
+        description: Exact successful protected-main Native Builds run ID
         required: true
-        default: v0.4.0
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -17,56 +17,135 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, file-qr-android-device]
     timeout-minutes: 20
+    env:
+      TRUSTED_MAIN_SHA: ${{ github.sha }}
+      FILE_QR_ANDROID_AUTHORITY_PATH: android-physical-authority.json
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.20.0
 
-      - name: Verify Android lab prerequisites
+      - name: Verify Android lab prerequisites and trusted main snapshot
         shell: bash
         run: |
           set -euo pipefail
           command -v adb
           command -v gh
+          command -v git
+          command -v sha256sum
           adb version
+          actual_head="$(git rev-parse HEAD | tr '[:upper:]' '[:lower:]')"
+          trusted_head="$(printf '%s' "$TRUSTED_MAIN_SHA" | tr '[:upper:]' '[:lower:]')"
+          if [ "$actual_head" != "$trusted_head" ]; then
+            echo 'Trusted main moved after dispatch; start a fresh physical-evidence run.' >&2
+            exit 1
+          fi
 
-      - name: Download exact Android release artifact
+      - name: Admit exact Android Native Builds artifact
+        id: authority
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          NATIVE_RUN_ID: ${{ inputs.native_run_id }}
         run: |
           set -euo pipefail
-          rm -rf release
-          mkdir -p release
-          gh release download "$RELEASE_TAG" \
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { resolveNativeBuild } from './scripts/physical-evidence-github.mjs';
+
+          const runId = Number(process.env.NATIVE_RUN_ID);
+          if (!Number.isSafeInteger(runId) || runId < 1) {
+            throw new Error('FQR_EVIDENCE_GITHUB: native_run_id must be a positive integer');
+          }
+          const build = resolveNativeBuild({ runId });
+          const trustedMain = String(process.env.TRUSTED_MAIN_SHA || '').toLowerCase();
+          if (build.commitSha !== trustedMain) {
+            throw new Error('FQR_EVIDENCE_BUILD_AUTHORITY: Native Builds head must equal the trusted dispatch main SHA');
+          }
+          const artifact = build.artifacts.android;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `artifact_id=${artifact.artifactId}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `artifact_digest=${artifact.artifactDigest}\n`);
+          NODE
+
+      - name: Download and verify exact Android artifact bytes
+        id: materialize
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_RUN_ID: ${{ inputs.native_run_id }}
+          ARTIFACT_ID: ${{ steps.authority.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ steps.authority.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          rm -rf trusted-android-artifact trusted-android-artifact.zip
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > trusted-android-artifact.zip
+          archive_sha256="$(sha256sum trusted-android-artifact.zip | cut -d' ' -f1)"
+          if [ "sha256:$archive_sha256" != "$ARTIFACT_DIGEST" ]; then
+            echo 'Downloaded Android archive does not match GitHub artifact digest.' >&2
+            exit 1
+          fi
+          mkdir trusted-android-artifact
+          gh run download "$NATIVE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'FileQR-Android-arm64.apk' \
-            --dir release
-          test -s release/FileQR-Android-arm64.apk
+            --name file-qr-android \
+            --dir trusted-android-artifact
+          rm -f trusted-android-artifact.zip
+          echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Verify materialized APK authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_RUN_ID: ${{ inputs.native_run_id }}
+          ARTIFACT_ID: ${{ steps.authority.outputs.artifact_id }}
+          ARCHIVE_SHA256: ${{ steps.materialize.outputs.archive_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { verifyAndroidPhysicalArtifact } from './scripts/physical-evidence-github.mjs';
+
+          const authority = await verifyAndroidPhysicalArtifact({
+            runId: Number(process.env.NATIVE_RUN_ID),
+            artifactId: Number(process.env.ARTIFACT_ID),
+            archiveSha256: process.env.ARCHIVE_SHA256,
+            apkPath: 'trusted-android-artifact/FileQR-Android-arm64.apk',
+            controlSha: process.env.TRUSTED_MAIN_SHA,
+          });
+          fs.writeFileSync(
+            process.env.FILE_QR_ANDROID_AUTHORITY_PATH,
+            `${JSON.stringify(authority, null, 2)}\n`,
+            { flag: 'wx', mode: 0o600 },
+          );
+          NODE
 
       - name: Collect physical Android camera evidence
         env:
-          FILE_QR_APK: release/FileQR-Android-arm64.apk
+          FILE_QR_APK: trusted-android-artifact/FileQR-Android-arm64.apk
           FILE_QR_ANDROID_EVIDENCE_PATH: android-physical-evidence.json
         run: node scripts/collect-android-physical-evidence.mjs
 
-      - name: Validate sanitized evidence
+      - name: Validate sanitized evidence and exact APK binding
         shell: bash
         run: |
           set -euo pipefail
           node -e '
             const fs = require("node:fs");
             const x = JSON.parse(fs.readFileSync("android-physical-evidence.json", "utf8"));
+            const authority = JSON.parse(fs.readFileSync("android-physical-authority.json", "utf8"));
             if (x?.cameraPermissionGranted !== true) process.exit(1);
             if (x?.cameraOwnerObserved !== true) process.exit(1);
             if (x?.appRecovered !== true) process.exit(1);
             if (x?.cameraImageryCaptured !== false) process.exit(1);
             if (!/^[a-f0-9]{64}$/.test(x?.device?.deviceSerialHash || "")) process.exit(1);
             if (!/^[a-f0-9]{64}$/.test(x?.device?.buildFingerprintHash || "")) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(x?.apkSha256 || "")) process.exit(1);
+            if (x.apkSha256 !== authority?.apk?.sha256) process.exit(1);
+            if (authority?.commitSha !== String(process.env.TRUSTED_MAIN_SHA || "").toLowerCase()) process.exit(1);
             console.log(`Physical Android camera evidence: PASS (${x.device.manufacturer} ${x.device.model}, Android ${x.device.androidRelease})`);
           '
 
@@ -74,7 +153,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-physical-evidence-${{ github.run_id }}
-          path: android-physical-evidence.json
+          path: |
+            android-physical-evidence.json
+            android-physical-authority.json
           if-no-files-found: error
           retention-days: 30
 
@@ -84,10 +165,12 @@ jobs:
           {
             echo '### File QR physical Android evidence'
             echo
+            echo 'Trusted protected-main Native Builds artifact authority: PASS'
+            echo 'Downloaded archive digest + materialized APK SHA-256 binding: PASS'
             echo 'Physical ADB device (emulators rejected): PASS'
             echo 'CAMERA permission on installed File QR: PASS'
             echo 'Native Scan QR control launched physical camera service: PASS'
             echo 'Scanner cancellation returned to File QR UI: PASS'
             echo 'Camera imagery captured by CI: NO'
-            echo 'Evidence artifact: android-physical-evidence.json'
+            echo 'Evidence artifact: android-physical-evidence.json + android-physical-authority.json'
           } >> "$GITHUB_STEP_SUMMARY"
