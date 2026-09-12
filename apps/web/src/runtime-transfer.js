@@ -46,7 +46,7 @@ export async function completeSender(payload, attemptId) {
   }
 }
 
-export async function handleSenderControlMessage(message, attemptId, streamFromOffset) {
+export async function handleSenderControlMessage(message, attemptId, streamFromOffset, options = {}) {
   const active = current();
   if (active.role !== 'sender' || active.attempt.id !== attemptId) return;
   const { type, payload } = message;
@@ -64,19 +64,30 @@ export async function handleSenderControlMessage(message, attemptId, streamFromO
       ? `Resuming ${active.file.name} from ${formatBytes(offset)}${relayed ? ' through the secure relay' : ''}.`
       : `${relayed ? 'Relayed securely. Sending' : 'Sending'} ${active.file.name} to the receiver.`);
     updateProgress(offset, active.file.size, offset > 0 ? 'Resuming' : 'Sending');
-    try {
-      if (relayed) {
-        const transport = active.attempt.relayTransport;
-        if (!transport) throw new Error('Secure relay transport is unavailable');
-        await transport.declareRemaining(active.file.size - offset);
+
+    const runStream = async () => {
+      try {
+        if (relayed) {
+          const transport = current().attempt.id === attemptId ? current().attempt.relayTransport : null;
+          if (!transport) throw new Error('Secure relay transport is unavailable');
+          await transport.declareRemaining(active.file.size - offset);
+        }
+        await streamFromOffset(offset);
+        if (current().attempt.id === attemptId) {
+          setState('verifying', 'All bytes sent. Waiting for the receiver to confirm the completed file.');
+        }
+      } catch (error) {
+        if (current().attempt.id === attemptId) {
+          await failTransfer(error?.message || 'The send stream failed.');
+        }
       }
-      await streamFromOffset(offset);
-      if (current().attempt.id === attemptId) {
-        setState('verifying', 'All bytes sent. Waiting for the receiver to confirm the completed file.');
-      }
-    } catch (error) {
-      await failTransfer(error?.message || 'The send stream failed.');
+    };
+
+    if (options.detachStream === true) {
+      void runStream();
+      return;
     }
+    await runStream();
     return;
   }
 
@@ -119,8 +130,9 @@ export async function handleSenderRelayControl(value, attemptId) {
       updateProgress(end, latest.file.size, 'Sending');
     }
     const latest = current();
+    if (latest.attempt.id !== attemptId) return;
     await transport.sendControl(controlEnvelope('transfer-complete', { fileId: latest.fileId, size: latest.file.size }));
-  });
+  }, { detachStream: true });
 }
 
 export function validateFileOffer(payload) {
