@@ -41,6 +41,21 @@ function fakeCrypto() {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+test('sender declares validated remaining bytes before first data only', async () => {
+  const { createWorkerRelayTransport } = await load();
+  const socket = new FakeSocket();
+  const transport = createWorkerRelayTransport({ socket, role: 'sender', sendCrypto: fakeCrypto(), receiveCrypto: fakeCrypto() });
+  await transport.declareRemaining(250);
+  assert.equal(socket.sent[0], JSON.stringify({ type: 'relay-budget', remaining: 250 }));
+  await transport.send(new Uint8Array([1]));
+  await assert.rejects(transport.declareRemaining(100), /data|started/i);
+  transport.close();
+
+  const receiver = createWorkerRelayTransport({ socket: new FakeSocket(), role: 'receiver', sendCrypto: fakeCrypto(), receiveCrypto: fakeCrypto() });
+  await assert.rejects(receiver.declareRemaining(0), /sender|role/i);
+  receiver.close();
+});
+
 test('relay transport blocks a ninth unacknowledged data frame until cumulative ack advances window', async () => {
   const { createWorkerRelayTransport } = await load();
   const socket = new FakeSocket();
