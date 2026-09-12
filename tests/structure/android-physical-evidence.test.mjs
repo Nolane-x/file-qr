@@ -49,6 +49,13 @@ test('Android physical authority helper exposes a fail-closed exact-run CLI usin
   assert.match(source, /prepare-optical-physical-evidence\.mjs/);
 });
 
+test('physical workflow validates the exact run and GitHub artifact digest encoding', () => {
+  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+  assert.match(workflow, /EXPECTED_NATIVE_RUN_ID/);
+  assert.match(workflow, /\^sha256:\[a-f0-9\]\{64\}\$/);
+  assert.match(workflow, /archiveSha256/);
+});
+
 test('physical Android collector proves a non-emulator camera path without recording camera imagery', () => {
   assert.ok(fs.existsSync(collectorUrl), 'physical Android evidence collector must exist');
   const source = fs.readFileSync(collectorUrl, 'utf8');
