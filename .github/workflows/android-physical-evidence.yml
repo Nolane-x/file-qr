@@ -33,7 +33,6 @@ jobs:
           set -euo pipefail
           command -v adb
           command -v gh
-          command -v unzip
           adb version
 
       - name: Materialize authoritative Android build input
@@ -56,12 +55,17 @@ jobs:
 
       - name: Validate sanitized evidence and build binding
         shell: bash
+        env:
+          EXPECTED_NATIVE_RUN_ID: ${{ inputs.native_run_id }}
         run: |
           set -euo pipefail
           node -e '
             const fs = require("node:fs");
             const evidence = JSON.parse(fs.readFileSync("android-physical-evidence.json", "utf8"));
             const authority = JSON.parse(fs.readFileSync("android-build-authority.json", "utf8"));
+            const expectedRunId = Number(process.env.EXPECTED_NATIVE_RUN_ID);
+            if (!Number.isSafeInteger(expectedRunId) || expectedRunId < 1) process.exit(1);
+            if (authority?.workflowRunId !== expectedRunId) process.exit(1);
             if (evidence?.cameraPermissionGranted !== true) process.exit(1);
             if (evidence?.cameraOwnerObserved !== true) process.exit(1);
             if (evidence?.appRecovered !== true) process.exit(1);
@@ -69,7 +73,9 @@ jobs:
             if (!/^[a-f0-9]{64}$/.test(evidence?.device?.deviceSerialHash || "")) process.exit(1);
             if (!/^[a-f0-9]{64}$/.test(evidence?.device?.buildFingerprintHash || "")) process.exit(1);
             if (!/^[a-f0-9]{40}$/.test(authority?.commitSha || "")) process.exit(1);
-            if (!/^[a-f0-9]{64}$/.test(authority?.artifactDigest || "")) process.exit(1);
+            if (!/^sha256:[a-f0-9]{64}$/.test(authority?.artifactDigest || "")) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(authority?.archiveSha256 || "")) process.exit(1);
+            if (authority.artifactDigest !== `sha256:${authority.archiveSha256}`) process.exit(1);
             if (!/^[a-f0-9]{64}$/.test(authority?.apkSha256 || "")) process.exit(1);
             if (evidence?.apkSha256 !== authority.apkSha256) process.exit(1);
             console.log(`Physical Android camera evidence: PASS (${evidence.device.manufacturer} ${evidence.device.model}, Android ${evidence.device.androidRelease})`);
