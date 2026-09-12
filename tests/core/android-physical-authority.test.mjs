@@ -53,14 +53,18 @@ function tempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fileqr-android-authority-'));
 }
 
+function writeArtifact(destination) {
+  fs.mkdirSync(destination, { recursive: false, mode: 0o700 });
+  fs.writeFileSync(path.join(destination, 'FileQR-Android-arm64.apk'), APK_BYTES, { mode: 0o600 });
+}
+
 test('Android physical preparation materializes the exact Native Builds APK and writes sanitized authority', async () => {
   const root = tempRoot();
   const outputDir = path.join(root, 'physical-input');
   const authorityPath = path.join(root, 'android-build-authority.json');
 
   const artifactFetcher = ({ outputDir: destination }) => {
-    fs.mkdirSync(destination, { recursive: false, mode: 0o700 });
-    fs.writeFileSync(path.join(destination, 'FileQR-Android-arm64.apk'), APK_BYTES, { mode: 0o600 });
+    writeArtifact(destination);
     return { archiveSha256: ARCHIVE_SHA };
   };
 
@@ -89,4 +93,28 @@ test('Android physical preparation materializes the exact Native Builds APK and 
   assert.deepEqual(fs.readFileSync(path.join(outputDir, 'FileQR-Android-arm64.apk')), APK_BYTES);
   assert.deepEqual(JSON.parse(fs.readFileSync(authorityPath, 'utf8')), authority);
   assert.doesNotMatch(fs.readFileSync(authorityPath, 'utf8'), /physical-input|\.apk\"\s*:/i);
+});
+
+test('Android physical preparation removes partial materialization when archive digest does not match', async () => {
+  const root = tempRoot();
+  const outputDir = path.join(root, 'physical-input');
+  const authorityPath = path.join(root, 'android-build-authority.json');
+  const otherArchiveSha = createHash('sha256').update('other-archive').digest('hex');
+
+  const artifactFetcher = ({ outputDir: destination }) => {
+    writeArtifact(destination);
+    return { archiveSha256: otherArchiveSha };
+  };
+
+  await assert.rejects(() => prepareAndroidPhysicalEvidence({
+    runId: 123,
+    outputDir,
+    authorityPath,
+    execGh,
+    controlSha: SHA,
+    artifactFetcher,
+  }), /FQR_ANDROID_PHYSICAL_BYTES/);
+
+  assert.equal(fs.existsSync(outputDir), false);
+  assert.equal(fs.existsSync(authorityPath), false);
 });
