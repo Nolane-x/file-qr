@@ -266,6 +266,80 @@ export function finalizeRestrictiveRelayEvidence({ deployRunId, productionOrigin
   return validateRestrictiveRelayEvidence({ deployment, productionOrigin, sourceSha256, receivedSha256, sender, receiver });
 }
 
+function readRelayEvidenceFile(filePath, label) {
+  if (typeof filePath !== 'string' || filePath.length === 0) fail('FQR_EVIDENCE_FILE', `${label} path is required`);
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    fail('FQR_EVIDENCE_FILE', `${label} is missing or invalid JSON`);
+  }
+}
+
+function atomicWriteRelayEvidence(outputPath, record) {
+  if (typeof outputPath !== 'string' || outputPath.length === 0) fail('FQR_EVIDENCE_FILE', 'output path is required');
+  const directory = path.dirname(outputPath);
+  const tmpPath = `${outputPath}.tmp-${process.pid}`;
+  let fd;
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fd = fs.openSync(tmpPath, 'wx', 0o600);
+    fs.writeFileSync(fd, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmpPath, outputPath);
+  } catch (error) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+    try { fs.rmSync(tmpPath, { force: true }); } catch {}
+    fail('FQR_EVIDENCE_FILE', error?.message || 'could not publish restrictive relay evidence');
+  }
+}
+
+function prepareRelayEvidenceOutput(outputPath, senderPath, receiverPath) {
+  if (typeof outputPath !== 'string' || outputPath.length === 0) fail('FQR_EVIDENCE_FILE', 'output path is required');
+  const resolvedOutput = path.resolve(outputPath);
+  for (const inputPath of [senderPath, receiverPath]) {
+    if (typeof inputPath === 'string' && inputPath.length > 0 && path.resolve(inputPath) === resolvedOutput) {
+      fail('FQR_EVIDENCE_FILE', 'output path must differ from endpoint journal paths');
+    }
+  }
+  try {
+    fs.rmSync(outputPath, { force: true });
+    fs.rmSync(`${outputPath}.tmp-${process.pid}`, { force: true });
+  } catch (error) {
+    fail('FQR_EVIDENCE_FILE', error?.message || 'could not clear previous restrictive relay evidence');
+  }
+}
+
+export function finalizeRestrictiveRelayEvidenceFiles({
+  deployRunId,
+  productionOrigin,
+  sourceSha256,
+  receivedSha256,
+  senderPath,
+  receiverPath,
+  outputPath,
+  execGh = defaultExecGh,
+} = {}) {
+  prepareRelayEvidenceOutput(outputPath, senderPath, receiverPath);
+  const sender = readRelayEvidenceFile(senderPath, 'sender journal');
+  const receiver = readRelayEvidenceFile(receiverPath, 'receiver journal');
+  const record = finalizeRestrictiveRelayEvidence({
+    deployRunId,
+    productionOrigin,
+    sourceSha256,
+    receivedSha256,
+    sender,
+    receiver,
+    execGh,
+  });
+  if (record.result !== 'PASS') fail('FQR_EVIDENCE_RESULT', 'restrictive relay evidence did not validate PASS');
+  atomicWriteRelayEvidence(outputPath, record);
+  return record;
+}
+
 export async function verifyAndroidPhysicalArtifact({
   runId,
   artifactId,
