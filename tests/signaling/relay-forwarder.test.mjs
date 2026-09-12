@@ -27,6 +27,18 @@ test('relay budget is bounded by declared remaining bytes and fixed protocol ove
   assert.throws(() => createRelayBudget(RELAY_MAX_SESSION_DECLARED_BYTES + 1), /remaining|limit/i);
 });
 
+test('sender may tighten remaining-byte budget before first data frame only', async () => {
+  const { createRelayForwardState, tightenRelayBudget } = await load();
+  let state = createRelayForwardState({ attemptId: 3, role: 'sender', remainingBytes: 1_000, now: 100 });
+  state = tightenRelayBudget(state, 250, 200);
+  assert.equal(state.budget.remainingBytes, 250);
+  assert.equal(state.lastProgressAt, 200);
+  assert.throws(() => tightenRelayBudget(state, 251, 201), /increase|remaining/i);
+  assert.throws(() => tightenRelayBudget({ ...state, dataForwarded: 1 }, 100, 202), /data|started/i);
+  const receiver = createRelayForwardState({ attemptId: 3, role: 'receiver', remainingBytes: 0, now: 100 });
+  assert.throws(() => tightenRelayBudget(receiver, 0, 200), /sender|role/i);
+});
+
 test('valid relay frames advance exact sequence and bounded byte counters', async () => {
   const { createRelayForwardState, processRelayFrame } = await load();
   let state = createRelayForwardState({ attemptId: 3, role: 'sender', remainingBytes: 100, now: 1_000 });
