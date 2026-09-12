@@ -32,6 +32,14 @@ export function createRelayForwardState({ attemptId, role, remainingBytes = 0, n
   };
 }
 
+export function tightenRelayBudget(state, remainingBytes, now = Date.now()) {
+  if (state?.role !== 'sender') throw new Error('Only sender relay budget may be tightened');
+  if (state.dataForwarded !== 0 || state.encodedDataForwarded !== 0) throw new Error('Relay data already started');
+  const next = createRelayBudget(remainingBytes);
+  if (next.remainingBytes > state.budget.remainingBytes) throw new Error('Relay remaining byte budget cannot increase');
+  return { ...state, budget: next, lastProgressAt: now };
+}
+
 function failure(state, code, { fatal = true, malformed = false } = {}) {
   const next = malformed ? { ...state, malformedCount: state.malformedCount + 1 } : state;
   return {
