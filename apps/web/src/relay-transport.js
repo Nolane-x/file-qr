@@ -174,6 +174,14 @@ export function createWorkerRelayTransport({
   return {
     get inFlight() { return pendingData.length; },
     get readyState() { return closed ? 'closed' : 'open'; },
+    async declareRemaining(remaining) {
+      if (role !== 'sender') throw new Error('Only sender relay transport may declare remaining bytes');
+      if (!Number.isSafeInteger(remaining) || remaining < 0) throw new Error('Invalid relay remaining bytes');
+      if (highestDataSent >= 0) throw new Error('Relay data already started');
+      return queueOutbound(async () => {
+        socket.send(JSON.stringify({ type: 'relay-budget', remaining }));
+      });
+    },
     async send(input) {
       if (role !== 'sender') throw new Error('Only sender relay transport may send file data');
       await acquireSlot();
