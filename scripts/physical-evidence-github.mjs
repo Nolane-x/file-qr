@@ -11,6 +11,7 @@ const ANDROID_APK_NAME = 'FileQR-Android-arm64.apk';
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA64 = /^[a-f0-9]{64}$/;
+const AUTHORIZED_WEB_DEPLOYMENTS = new WeakSet();
 const RELAY_SEQUENCE = Object.freeze([
   ['direct-started', 'webrtc-direct'],
   ['direct-exhausted', 'webrtc-direct'],
@@ -156,17 +157,22 @@ export function resolveWebDeploy({ runId, execGh = defaultExecGh } = {}) {
     fail('FQR_EVIDENCE_GITHUB_AUTHORITY', 'web deployment is not a successful current-main Deploy Web push');
   }
 
-  return {
+  const deployment = Object.freeze({
     repository: REPOSITORY,
     workflow: WEB_DEPLOY_WORKFLOW,
     workflowRunId: runId,
     event: 'push',
     headBranch: 'main',
     commitSha: run.head_sha,
-  };
+  });
+  AUTHORIZED_WEB_DEPLOYMENTS.add(deployment);
+  return deployment;
 }
 
 function validateDeployRecord(deployment) {
+  if (!deployment || typeof deployment !== 'object' || !AUTHORIZED_WEB_DEPLOYMENTS.has(deployment)) {
+    fail('FQR_EVIDENCE_GITHUB_AUTHORITY', 'deployment record must come from the live current-main resolver');
+  }
   exactKeys(deployment, ['repository', 'workflow', 'workflowRunId', 'event', 'headBranch', 'commitSha'], 'deployment');
   if (
     deployment.repository !== REPOSITORY ||
