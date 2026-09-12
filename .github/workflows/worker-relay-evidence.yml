@@ -2,6 +2,9 @@ name: Worker Relay Evidence
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Deploy Web"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -12,13 +15,17 @@ concurrency:
 
 jobs:
   production-worker-relay:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.20.0
@@ -32,12 +39,23 @@ jobs:
         env:
           FILE_QR_PRODUCTION_ORIGIN: https://fileqr.nolane-file.workers.dev/
           FILE_QR_WORKER_RELAY_EVIDENCE_PATH: worker-relay-evidence.json
+          FILE_QR_SOURCE_COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          rm -f worker-relay-evidence.json
-          node tests/browser/production-worker-relay.mjs
-          test -s worker-relay-evidence.json
+          for attempt in $(seq 1 12); do
+            rm -f worker-relay-evidence.json
+            if node tests/browser/production-worker-relay.mjs; then
+              test -s worker-relay-evidence.json
+              exit 0
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo '::error::Production Worker relay evidence did not converge after the bounded retry window.'
+              exit 1
+            fi
+            echo "Production relay deployment not converged yet ($attempt/12); retrying."
+            sleep 15
+          done
       - name: Validate sanitized PASS evidence
         shell: bash
         run: |
@@ -46,10 +64,11 @@ jobs:
           const fs = require('node:fs');
           const x = JSON.parse(fs.readFileSync('worker-relay-evidence.json', 'utf8'));
           const top = Object.keys(x).sort();
-          const expected = ['forcedRelay','payloadBytes','productionOrigin','receiver','receivedSha256','result','schemaVersion','sender','sourceSha256','testedAt','transport'].sort();
+          const expected = ['forcedRelay','payloadBytes','productionOrigin','receiver','receivedSha256','result','schemaVersion','sender','sourceCommit','sourceSha256','testedAt','transport'].sort();
           if (JSON.stringify(top) !== JSON.stringify(expected)) throw new Error('unexpected evidence keys');
           if (x.schemaVersion !== 1 || x.result !== 'PASS' || x.transport !== 'worker-relay' || x.forcedRelay !== true) throw new Error('invalid relay evidence result');
           if (x.productionOrigin !== 'https://fileqr.nolane-file.workers.dev') throw new Error('wrong production origin');
+          if (!/^[a-f0-9]{40}$/.test(x.sourceCommit)) throw new Error('invalid source commit');
           if (!Number.isSafeInteger(x.payloadBytes) || x.payloadBytes < 1024) throw new Error('invalid payload size');
           if (!/^[a-f0-9]{64}$/.test(x.sourceSha256) || x.receivedSha256 !== x.sourceSha256) throw new Error('payload SHA-256 mismatch');
           for (const side of ['sender', 'receiver']) {
@@ -76,6 +95,7 @@ jobs:
           {
             echo '### File QR production Worker relay evidence'
             echo
+            echo "Source commit: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
             echo 'Canonical production web origin: PASS'
             echo 'Evidence-only forced Worker relay: PASS'
             echo 'Dedicated relay WebSocket observed on both peers: PASS'
