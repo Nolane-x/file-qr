@@ -1,5 +1,7 @@
 import { compactReceiveCode } from '../../../packages/core/session.js';
 
+const RELAY_PRECONSUMER_MAX_MESSAGES = 8;
+
 function wsOrigin(origin) {
   const url = new URL(origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -103,19 +105,49 @@ export function connectRelay(origin, code, options) {
     let settled = false;
     let resolveReady;
     let rejectReady;
+    let relayConsumer = null;
+    const pendingRelayMessages = [];
+
     socket.fileQrRelayReady = new Promise((resolveHandshake, rejectHandshake) => {
       resolveReady = resolveHandshake;
       rejectReady = rejectHandshake;
     });
+
+    socket.fileQrAdoptRelayMessageHandler = (handler) => {
+      if (typeof handler !== 'function') throw new TypeError('Relay message handler is required');
+      if (relayConsumer) throw new Error('Relay socket already has a message consumer');
+      relayConsumer = handler;
+      const backlog = pendingRelayMessages.splice(0);
+      for (const event of backlog) relayConsumer(event);
+      return () => {
+        if (relayConsumer === handler) relayConsumer = null;
+        pendingRelayMessages.length = 0;
+      };
+    };
+
+    const dispatchRelayPayload = (event) => {
+      if (relayConsumer) {
+        relayConsumer(event);
+        return;
+      }
+      if (pendingRelayMessages.length >= RELAY_PRECONSUMER_MAX_MESSAGES) {
+        try { socket.close(4003, 'Relay consumer unavailable'); } catch { /* already closed */ }
+        return;
+      }
+      pendingRelayMessages.push(event);
+    };
+
     const onMessage = (event) => {
-      if (typeof event.data !== 'string') return;
+      if (typeof event.data !== 'string') {
+        dispatchRelayPayload(event);
+        return;
+      }
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
-      if (message?.type !== 'relay-ready') return;
+      if (message?.type !== 'relay-ready' || settled) return;
       try {
         const peerNoncePrefix = decodeRelayNoncePrefix(message.peerNoncePrefix);
         settled = true;
-        socket.removeEventListener('message', onMessage);
         socket.removeEventListener('close', onCloseBeforeReady);
         resolveReady({ peerNoncePrefix });
       } catch (error) {
@@ -127,7 +159,6 @@ export function connectRelay(origin, code, options) {
     const onCloseBeforeReady = () => {
       if (settled) return;
       settled = true;
-      socket.removeEventListener('message', onMessage);
       rejectReady(new Error('Relay closed before peer handshake completed.'));
     };
     const onOpen = () => { cleanupOpen(); resolve(socket); };
