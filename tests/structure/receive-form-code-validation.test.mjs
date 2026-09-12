@@ -1,12 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import { readWebRuntimeSource } from '../helpers/web-runtime-source.mjs';
 
-const runtimeUrl = new URL('../../apps/web/src/main.js', import.meta.url);
-const runtime = fs.readFileSync(runtimeUrl, 'utf8');
+const runtime = readWebRuntimeSource();
 
 test('direct receive submission validates the raw code before normalization', () => {
-  const start = runtime.indexOf('async function receiveFile(rawCode)');
+  const start = runtime.indexOf('async function receiveFile(rawCode, relaySecret = null)');
   const end = runtime.indexOf('\nasync function onScannedPayload', start);
   assert.ok(start >= 0 && end > start, 'receiveFile runtime must be discoverable');
 
@@ -21,14 +20,6 @@ test('direct receive submission validates the raw code before normalization', ()
 test('receive-code input formatting never truncates an invalid overlong value', () => {
   const handler = runtime.match(/ui\.codeInput\.addEventListener\('input', \(\) => \{([\s\S]*?)\}\);/);
   assert.ok(handler, 'receive-code input handler must be discoverable');
-  assert.match(
-    handler[1],
-    /isReceiveCode\(ui\.codeInput\.value\)/,
-    'live formatting must be gated by strict code validation instead of normalize-first truncation',
-  );
-  assert.match(
-    handler[1],
-    /if\s*\([^)]*isReceiveCode/,
-    'an invalid or overlong input value must remain intact so submit-time validation can reject it',
-  );
+  assert.match(handler[1], /isReceiveCode\(ui\.codeInput\.value\)/);
+  assert.match(handler[1], /if\s*\([^)]*isReceiveCode/);
 });
