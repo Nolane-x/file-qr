@@ -102,6 +102,7 @@ test('file finalizer reads endpoint journals and atomically publishes only valid
     assert.equal(fs.statSync(outputPath).mode & 0o777, 0o600);
 
     const invalidOutput = path.join(dir, 'invalid-proof.json');
+    fs.writeFileSync(invalidOutput, JSON.stringify({ result: 'PASS', stale: true }));
     fs.writeFileSync(senderPath, JSON.stringify(journal('sender', true)));
     assert.throws(() => evidence.finalizeRestrictiveRelayEvidenceFiles({
       deployRunId: 123,
