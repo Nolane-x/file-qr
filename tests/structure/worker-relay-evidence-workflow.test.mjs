@@ -35,12 +35,13 @@ test('production probe forces encrypted Worker relay and independently hashes ra
     'sourceSha256',
     'receivedSha256',
     'worker-relay',
-    'directPeerCreated',
     'relaySocketObserved',
+    "pathname.endsWith('/relay')",
     'FILE_QR_WORKER_RELAY_EVIDENCE_PATH',
   ]) assert.ok(probe.includes(token), `missing production relay proof token ${token}`);
   assert.match(probe, /assert\.equal\(receivedSha256, sourceSha256/);
-  assert.match(probe, /assert\.equal\([^\n]*directPeerCreated[^\n]*false/);
+  assert.match(probe, /assert\.equal\(senderRelayObserved, true/);
+  assert.match(probe, /assert\.equal\(receiverRelayObserved, true/);
 });
 
 test('production evidence schema cannot persist rendezvous authority or transferred bytes', () => {
@@ -58,7 +59,7 @@ test('PR browser reliability runs deterministic local Worker relay integrity pro
   assert.match(workflow, /worker-relay-integrity\.mjs/);
   assert.match(workflow, /FILE_QR_BROWSER_ORIGIN:\s*http:\/\/127\.0\.0\.1:5173/);
   assert.match(localProbe, /forceRelay=1/);
-  assert.match(localProbe, /assert\.equal\(receivedSha256, sourceSha256/);
+  assert.match(localProbe, /receivedSha256, evidence\.sourceSha256/);
   assert.match(localProbe, /relaySocketObserved/);
-  assert.match(localProbe, /directPeerCreated/);
+  assert.match(localProbe, /transport, 'worker-relay'/);
 });
