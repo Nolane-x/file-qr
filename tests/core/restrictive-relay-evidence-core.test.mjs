@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as evidence from '../../scripts/physical-evidence-github.mjs';
 
 const ORIGIN = 'https://fileqr.nolane-file.workers.dev';
@@ -70,4 +73,47 @@ test('validator requires live deployment authority and natural direct exhaustion
   assert.throws(() => evidence.validateRestrictiveRelayEvidence(input(deployment, { receiver: invalidJournal })), /valid enabled evidence record/i);
 
   assert.throws(() => evidence.validateRestrictiveRelayEvidence(input(deployment, { sender: { ...journal('sender'), extra: true } })), /unknown or missing fields/i);
+});
+
+test('file finalizer reads endpoint journals and atomically publishes only validated PASS evidence', () => {
+  assert.equal(typeof evidence.finalizeRestrictiveRelayEvidenceFiles, 'function');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fileqr-relay-evidence-'));
+  try {
+    const senderPath = path.join(dir, 'sender.json');
+    const receiverPath = path.join(dir, 'receiver.json');
+    const outputPath = path.join(dir, 'proof.json');
+    fs.writeFileSync(senderPath, JSON.stringify(journal('sender')));
+    fs.writeFileSync(receiverPath, JSON.stringify(journal('receiver')));
+
+    const record = evidence.finalizeRestrictiveRelayEvidenceFiles({
+      deployRunId: 123,
+      productionOrigin: ORIGIN,
+      sourceSha256: HASH,
+      receivedSha256: HASH,
+      senderPath,
+      receiverPath,
+      outputPath,
+      execGh: execForDeploy(),
+    });
+
+    assert.equal(record.result, 'PASS');
+    assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, 'utf8')), record);
+    assert.equal(fs.statSync(outputPath).mode & 0o777, 0o600);
+
+    const invalidOutput = path.join(dir, 'invalid-proof.json');
+    fs.writeFileSync(senderPath, JSON.stringify(journal('sender', true)));
+    assert.throws(() => evidence.finalizeRestrictiveRelayEvidenceFiles({
+      deployRunId: 123,
+      productionOrigin: ORIGIN,
+      sourceSha256: HASH,
+      receivedSha256: HASH,
+      senderPath,
+      receiverPath,
+      outputPath: invalidOutput,
+      execGh: execForDeploy(),
+    }), /forced relay/i);
+    assert.equal(fs.existsSync(invalidOutput), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
