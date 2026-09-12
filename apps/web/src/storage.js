@@ -1,5 +1,6 @@
 const DEFAULT_MEMORY_LIMIT = 512 * 1024 * 1024;
 export const OPFS_DURABILITY_CHECKPOINT_BYTES = 1024 * 1024;
+export const DOWNLOAD_BACKING_RELEASE_MS = 60_000;
 const memoryPartials = new Map();
 
 function safePart(value) {
@@ -227,7 +228,10 @@ export async function createReceiveSink(meta, options = {}) {
   return createMemorySink(meta, { limit: options.limit ?? DEFAULT_MEMORY_LIMIT, key });
 }
 
-export function downloadReceivedFile(file, name = file.name) {
+export function downloadReceivedFile(file, name = file.name, options = {}) {
+  const releaseAfterMs = Number.isFinite(options.releaseAfterMs)
+    ? Math.max(0, options.releaseAfterMs)
+    : DOWNLOAD_BACKING_RELEASE_MS;
   const url = URL.createObjectURL(file);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -237,5 +241,8 @@ export function downloadReceivedFile(file, name = file.name) {
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    Promise.resolve().then(() => options.onRelease?.()).catch(() => {});
+  }, releaseAfterMs);
 }
