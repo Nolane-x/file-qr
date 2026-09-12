@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { defaultIceServers, fetchOptionalIceServers } from '../../apps/web/src/webrtc.js';
+import { readWebRuntimeSource } from '../helpers/web-runtime-source.mjs';
 
 const signaling = fs.readFileSync(new URL('../../services/signaling/src/index.js', import.meta.url), 'utf8');
 const wrangler = fs.readFileSync(new URL('../../services/signaling/wrangler.jsonc', import.meta.url), 'utf8');
-const main = fs.readFileSync(new URL('../../apps/web/src/main.js', import.meta.url), 'utf8');
+const runtime = readWebRuntimeSource();
 
 test('optional TURN fetch treats unconfigured signaling as direct-mode success', async () => {
   let requestedUrl = '';
@@ -60,9 +61,9 @@ test('signaling TURN boundary is lease-bound and keeps long-lived credentials se
   assert.ok(!/Bearer\s+[A-Za-z0-9_-]{20,}/.test(signaling));
 });
 
-test('web runtime merges optional TURN with default STUN before creating each attempt peer', () => {
-  assert.match(main, /fetchOptionalIceServers/);
-  assert.match(main, /defaultIceServers/);
-  assert.match(main, /resolveIceServers/);
-  assert.match(main, /createPeerConnection\(\{\s*iceServers\s*\}\)/);
+test('web runtime merges optional TURN with default STUN before creating each direct attempt peer', () => {
+  assert.match(runtime, /fetchOptionalIceServers/);
+  assert.match(runtime, /defaultIceServers/);
+  assert.match(runtime, /resolveIceServers/);
+  assert.match(runtime, /createPeerConnection\(\{\s*iceServers\s*\}\)/);
 });
