@@ -49,6 +49,7 @@ export function createWorkerRelayTransport({
   let ackTimer = null;
   let outboundChain = Promise.resolve();
   let incomingChain = Promise.resolve();
+  let releaseRelayMessageHandler = null;
 
   function ensureOpen() {
     if (closed || socket.readyState !== 1) throw closeError || new Error('Relay transport is closed');
@@ -167,7 +168,12 @@ export function createWorkerRelayTransport({
   };
   const onClose = () => shutdown(new Error('Relay socket closed'), { closeSocket: false });
   const onSocketError = () => fail(new Error('Relay socket failed'));
-  socket.addEventListener?.('message', onMessage);
+
+  if (typeof socket.fileQrAdoptRelayMessageHandler === 'function') {
+    releaseRelayMessageHandler = socket.fileQrAdoptRelayMessageHandler(onMessage);
+  } else {
+    socket.addEventListener?.('message', onMessage);
+  }
   socket.addEventListener?.('close', onClose);
   socket.addEventListener?.('error', onSocketError);
 
@@ -217,7 +223,8 @@ export function createWorkerRelayTransport({
     },
     close() {
       shutdown(new Error('Relay transport closed'));
-      socket.removeEventListener?.('message', onMessage);
+      if (releaseRelayMessageHandler) releaseRelayMessageHandler();
+      else socket.removeEventListener?.('message', onMessage);
       socket.removeEventListener?.('close', onClose);
       socket.removeEventListener?.('error', onSocketError);
     },
