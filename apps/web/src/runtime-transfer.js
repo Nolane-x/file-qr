@@ -115,7 +115,7 @@ export async function handleSenderChannelMessage(event, attemptId) {
 
 export async function handleSenderRelayControl(value, attemptId) {
   const message = decodeRelayControl(value);
-  await handleSenderControlMessage(message, attemptId, async (offset) => {
+  await handleSenderControlMessage(parsedMessageForRelay(message), attemptId, async (offset) => {
     const active = current();
     const transport = active.attempt.relayTransport;
     if (!transport) throw new Error('Secure relay transport is unavailable');
@@ -133,6 +133,10 @@ export async function handleSenderRelayControl(value, attemptId) {
     if (latest.attempt.id !== attemptId) return;
     await transport.sendControl(controlEnvelope('transfer-complete', { fileId: latest.fileId, size: latest.file.size }));
   }, { detachStream: true });
+}
+
+function parsedMessageForRelay(message) {
+  return message;
 }
 
 export function validateFileOffer(payload) {
@@ -197,9 +201,15 @@ export async function finishReceivedTransfer(payload, attemptId, sendControl) {
   setState('verifying', 'Finalizing the received file…');
   const file = await sink.close();
   await sendControl('complete-ack', { fileId: meta.fileId, size: meta.size });
-  downloadReceivedFile(file, meta.name);
-  await sink.cleanup?.();
+
+  if (sink.kind === 'opfs') {
+    downloadReceivedFile(file, meta.name, { onRelease: () => sink.cleanup?.() });
+  } else {
+    downloadReceivedFile(file, meta.name);
+    await sink.cleanup?.();
+  }
   if (current().attempt.id === attemptId) current().attempt.sink = null;
+
   updateProgress(meta.size, meta.size, 'Received');
   try { current().attempt.transportPolicy?.complete(); } catch { /* completion is already final */ }
   const detail = `${meta.name} is ready on this device.`;
