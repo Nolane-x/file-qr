@@ -133,18 +133,33 @@ function bindUiEvents() {
   });
 }
 
+function initialReceivePayload() {
+  const query = new URLSearchParams(location.search);
+  const fragment = new URLSearchParams(location.hash.startsWith('#') ? location.hash.slice(1) : '');
+  const fragmentAuthority = fragment.has('receive') || fragment.has('relay');
+  const hasPayload = query.has('receive') || query.has('relay') || fragmentAuthority;
+  const details = hasPayload ? parseReceivePayloadDetails(location.href) : null;
+
+  if (fragmentAuthority || query.has('relay')) {
+    const scrubbedQuery = new URLSearchParams(location.search);
+    scrubbedQuery.delete('relay');
+    const serialized = scrubbedQuery.toString();
+    history.replaceState({}, '', `${location.pathname}${serialized ? `?${serialized}` : ''}`);
+  }
+  return { hasPayload, details };
+}
+
 export function bootstrapFileQrUi() {
   bindUiEvents();
   if (ui.scanQr && (!scanner || !navigator.mediaDevices?.getUserMedia)) ui.scanQr.hidden = true;
 
-  const receiveParam = new URLSearchParams(location.search).get('receive');
+  const initial = initialReceivePayload();
   if (!platformSupported()) {
     setState('unsupported', `Use Windows or Android. Native downloads are available at ${REPO_RELEASE}.`);
     return;
   }
-  if (receiveParam) {
-    const details = parseReceivePayloadDetails(location.href);
-    if (details) receiveFile(details.code, details.relaySecret).catch(() => {});
+  if (initial.hasPayload) {
+    if (initial.details) receiveFile(initial.details.code, initial.details.relaySecret).catch(() => {});
     else {
       setState('idle');
       ui.status.textContent = 'That receive link is not valid.';
