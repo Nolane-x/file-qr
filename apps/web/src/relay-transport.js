@@ -49,6 +49,7 @@ export function createWorkerRelayTransport({
   let ackTimer = null;
   let outboundChain = Promise.resolve();
   let incomingChain = Promise.resolve();
+  let applicationChain = Promise.resolve();
   let releaseRelayMessageHandler = null;
 
   function ensureOpen() {
@@ -137,26 +138,37 @@ export function createWorkerRelayTransport({
     try { onError(normalized); } catch { /* consumer error is non-authoritative */ }
   }
 
+  function queueApplication(operation) {
+    const next = applicationChain.then(async () => {
+      if (closed) return;
+      await operation();
+    });
+    applicationChain = next.catch((error) => fail(error));
+  }
+
   async function handleMessage(data) {
     if (typeof data === 'string') return;
     const decoded = await receiveCrypto.decrypt(data);
-    if (decoded.kind === 'data') {
-      if (role !== 'receiver') throw new Error('Relay role received forbidden data');
-      await onData(decoded.plaintext);
-      highestDataReceived = decoded.sequence;
-      receivedSinceAck += 1;
-      scheduleAck();
-      return;
-    }
     if (decoded.kind === 'ack') {
       applyAck(readUint32(decoded.plaintext));
+      return;
+    }
+    if (decoded.kind === 'data') {
+      if (role !== 'receiver') throw new Error('Relay role received forbidden data');
+      queueApplication(async () => {
+        await onData(decoded.plaintext);
+        if (closed) return;
+        highestDataReceived = decoded.sequence;
+        receivedSinceAck += 1;
+        scheduleAck();
+      });
       return;
     }
     if (decoded.kind === 'control') {
       const text = decoder.decode(decoded.plaintext);
       let value = text;
       try { value = JSON.parse(text); } catch { /* preserve raw text */ }
-      await onControl(value);
+      queueApplication(async () => onControl(value));
       return;
     }
     if (decoded.kind === 'abort') throw new Error('Relay peer aborted the transfer');
