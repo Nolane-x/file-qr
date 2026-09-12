@@ -63,3 +63,46 @@ test('PR browser reliability runs deterministic local Worker relay integrity pro
   assert.match(localProbe, /relaySocketObserved/);
   assert.match(localProbe, /transport, 'worker-relay'/);
 });
+
+test('README describes direct-first Worker relay without overstating hosted evidence', () => {
+  const readme = requireFile('README.md');
+  assert.match(readme, /direct-first/i);
+  assert.match(readme, /Worker relay/i);
+  assert.match(readme, /QR-only|QR.*secret/i);
+  assert.match(readme, /TURN.*optional|optional TURN/is);
+  assert.match(readme, /hosted.*evidence/is);
+  assert.match(readme, /physical.*restrictive-network|restrictive-network.*physical/is);
+  assert.match(readme, /manual.*code.*(?:does not|cannot).*relay/is);
+});
+
+test('security model separates relay admission authority from QR-only payload confidentiality', () => {
+  const security = requireFile('SECURITY.md');
+  for (const pattern of [
+    /Worker relay/i,
+    /QR-only|QR.*relay secret/i,
+    /HKDF-SHA-256/i,
+    /AES-256-GCM/i,
+    /attempt-scoped/i,
+    /capabilit/i,
+    /ciphertext.*(?:not|never).*persist|(?:not|never).*persist.*ciphertext/is,
+    /manual.*code.*(?:does not|cannot).*relay/is,
+    /TURN.*optional|optional TURN/is,
+  ]) assert.match(security, pattern);
+});
+
+test('protocol documents bounded encrypted relay framing resume and evidence-only force mode', () => {
+  const protocol = requireFile('docs/architecture/PROTOCOL.md');
+  for (const pattern of [
+    /Encrypted Worker relay/i,
+    /\/v1\/sessions\/\{code\}\/relay/,
+    /forceRelay=1/,
+    /64 KiB/i,
+    /8 unacknowledged|eight unacknowledged/i,
+    /every 4.*250 ms|four.*250 ms/is,
+    /30 s|30-second/i,
+    /4 relay attempts|four relay attempts/i,
+    /relay-budget/,
+    /validated.*(?:resume|offset)|(?:resume|offset).*validated/is,
+    /same-attempt.*(?:splice|switch).*blocked|blocked.*same-attempt/is,
+  ]) assert.match(protocol, pattern);
+});
