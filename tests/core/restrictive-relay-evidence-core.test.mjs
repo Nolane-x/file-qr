@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as evidence from '../../packages/core/physical-evidence.js';
+import * as evidence from '../../scripts/physical-evidence-github.mjs';
 
 const ORIGIN = 'https://fileqr.nolane-file.workers.dev';
 const SHA = 'a'.repeat(40);
