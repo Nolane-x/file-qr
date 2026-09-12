@@ -33,7 +33,7 @@ async function hashFile(filePath) {
   return hash.digest('hex');
 }
 
-function currentHeadSha() {
+export function currentHeadSha() {
   const result = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const sha = String(result.stdout || '').trim();
   if (result.error || result.status !== 0 || !SHA40.test(sha)) fail('FQR_EVIDENCE_BUILD_AUTHORITY', 'cannot resolve trusted control HEAD');
@@ -50,7 +50,7 @@ function runGh(args, { stdout = 'pipe' } = {}) {
   return result;
 }
 
-async function defaultArtifactFetcher({ platform, artifact, runId, destinationDir }) {
+export async function defaultArtifactFetcher({ platform, artifact, runId, destinationDir }) {
   const archivePath = `${destinationDir}.artifact.zip`;
   fs.mkdirSync(destinationDir, { recursive: false, mode: 0o700 });
 
