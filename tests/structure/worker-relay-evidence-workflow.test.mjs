@@ -11,12 +11,18 @@ function requireFile(path) {
   return read(path);
 }
 
-test('worker relay evidence workflow is manual trusted-main only and secretless', () => {
+test('worker relay evidence auto-follows successful trusted-main web deploy and stays secretless', () => {
   const workflow = requireFile('.github/workflows/worker-relay-evidence.yml');
   assert.match(workflow, /workflow_dispatch:/);
-  assert.doesNotMatch(workflow, /pull_request:|\npush:|workflow_run:/);
-  assert.match(workflow, /if:\s*github\.ref == 'refs\/heads\/main'/);
-  assert.match(workflow, /ref:\s*main/);
+  assert.match(workflow, /workflow_run:/);
+  assert.match(workflow, /workflows:\s*\[?['"]?Deploy Web['"]?\]?/);
+  assert.match(workflow, /types:\s*\[completed\]/);
+  assert.doesNotMatch(workflow, /pull_request:|\npush:/);
+  assert.match(workflow, /workflow_run\.conclusion\s*==\s*'success'/);
+  assert.match(workflow, /workflow_run\.head_branch\s*==\s*'main'/);
+  assert.match(workflow, /workflow_run\.head_sha/);
+  assert.match(workflow, /ref:\s*\$\{\{/);
+  assert.match(workflow, /for attempt in/);
   assert.match(workflow, /https:\/\/fileqr\.nolane-file\.workers\.dev\/?/);
   assert.match(workflow, /tests\/browser\/production-worker-relay\.mjs/);
   assert.match(workflow, /worker-relay-evidence\.json/);
@@ -34,14 +40,17 @@ test('production probe forces encrypted Worker relay and independently hashes ra
     'forceRelay=1',
     'sourceSha256',
     'receivedSha256',
+    'sourceCommit',
     'worker-relay',
     'relaySocketObserved',
     "pathname.endsWith('/relay')",
     'FILE_QR_WORKER_RELAY_EVIDENCE_PATH',
+    'FILE_QR_SOURCE_COMMIT',
   ]) assert.ok(probe.includes(token), `missing production relay proof token ${token}`);
   assert.match(probe, /assert\.equal\(receivedSha256, sourceSha256/);
   assert.match(probe, /assert\.equal\(senderRelayObserved, true/);
   assert.match(probe, /assert\.equal\(receiverRelayObserved, true/);
+  assert.doesNotMatch(probe, /assert\.match\([^\n]*(?:relay|receive)/i, 'receive/relay authority assertions must not echo authority into logs');
 });
 
 test('production evidence schema cannot persist rendezvous authority or transferred bytes', () => {
@@ -94,6 +103,7 @@ test('protocol documents bounded encrypted relay framing resume and evidence-onl
   const protocol = requireFile('docs/architecture/PROTOCOL.md');
   for (const pattern of [
     /Encrypted Worker relay/i,
+    /URL fragment/i,
     /\/v1\/sessions\/\{code\}\/relay/,
     /forceRelay=1/,
     /64 KiB/i,
