@@ -115,7 +115,7 @@ export async function handleSenderChannelMessage(event, attemptId) {
 
 export async function handleSenderRelayControl(value, attemptId) {
   const message = decodeRelayControl(value);
-  await handleSenderControlMessage(parsedMessageForRelay(message), attemptId, async (offset) => {
+  await handleSenderControlMessage(message, attemptId, async (offset) => {
     const active = current();
     const transport = active.attempt.relayTransport;
     if (!transport) throw new Error('Secure relay transport is unavailable');
@@ -133,10 +133,6 @@ export async function handleSenderRelayControl(value, attemptId) {
     if (latest.attempt.id !== attemptId) return;
     await transport.sendControl(controlEnvelope('transfer-complete', { fileId: latest.fileId, size: latest.file.size }));
   }, { detachStream: true });
-}
-
-function parsedMessageForRelay(message) {
-  return message;
 }
 
 export function validateFileOffer(payload) {
