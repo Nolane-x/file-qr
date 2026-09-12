@@ -3,14 +3,14 @@ name: Android Physical Evidence
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: GitHub release tag containing FileQR-Android-arm64.apk
+      native_run_id:
+        description: Successful protected-main Native Builds run ID to bind this physical ceremony
         required: true
-        default: v0.4.0
         type: string
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   physical-camera:
@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.20.0
@@ -31,63 +33,74 @@ jobs:
           set -euo pipefail
           command -v adb
           command -v gh
+          command -v unzip
           adb version
 
-      - name: Download exact Android release artifact
+      - name: Materialize authoritative Android build input
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          NATIVE_RUN_ID: ${{ inputs.native_run_id }}
         run: |
           set -euo pipefail
-          rm -rf release
-          mkdir -p release
-          gh release download "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern 'FileQR-Android-arm64.apk' \
-            --dir release
-          test -s release/FileQR-Android-arm64.apk
+          node scripts/prepare-android-physical-evidence.mjs \
+            --run-id "$NATIVE_RUN_ID" \
+            --output-dir physical-input \
+            --authority android-build-authority.json
 
       - name: Collect physical Android camera evidence
         env:
-          FILE_QR_APK: release/FileQR-Android-arm64.apk
+          FILE_QR_APK: physical-input/FileQR-Android-arm64.apk
           FILE_QR_ANDROID_EVIDENCE_PATH: android-physical-evidence.json
         run: node scripts/collect-android-physical-evidence.mjs
 
-      - name: Validate sanitized evidence
+      - name: Validate sanitized evidence and build binding
         shell: bash
         run: |
           set -euo pipefail
           node -e '
             const fs = require("node:fs");
-            const x = JSON.parse(fs.readFileSync("android-physical-evidence.json", "utf8"));
-            if (x?.cameraPermissionGranted !== true) process.exit(1);
-            if (x?.cameraOwnerObserved !== true) process.exit(1);
-            if (x?.appRecovered !== true) process.exit(1);
-            if (x?.cameraImageryCaptured !== false) process.exit(1);
-            if (!/^[a-f0-9]{64}$/.test(x?.device?.deviceSerialHash || "")) process.exit(1);
-            if (!/^[a-f0-9]{64}$/.test(x?.device?.buildFingerprintHash || "")) process.exit(1);
-            console.log(`Physical Android camera evidence: PASS (${x.device.manufacturer} ${x.device.model}, Android ${x.device.androidRelease})`);
+            const evidence = JSON.parse(fs.readFileSync("android-physical-evidence.json", "utf8"));
+            const authority = JSON.parse(fs.readFileSync("android-build-authority.json", "utf8"));
+            if (evidence?.cameraPermissionGranted !== true) process.exit(1);
+            if (evidence?.cameraOwnerObserved !== true) process.exit(1);
+            if (evidence?.appRecovered !== true) process.exit(1);
+            if (evidence?.cameraImageryCaptured !== false) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(evidence?.device?.deviceSerialHash || "")) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(evidence?.device?.buildFingerprintHash || "")) process.exit(1);
+            if (!/^[a-f0-9]{40}$/.test(authority?.commitSha || "")) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(authority?.artifactDigest || "")) process.exit(1);
+            if (!/^[a-f0-9]{64}$/.test(authority?.apkSha256 || "")) process.exit(1);
+            if (evidence?.apkSha256 !== authority.apkSha256) process.exit(1);
+            console.log(`Physical Android camera evidence: PASS (${evidence.device.manufacturer} ${evidence.device.model}, Android ${evidence.device.androidRelease})`);
           '
 
       - name: Publish physical Android evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-physical-evidence-${{ github.run_id }}
-          path: android-physical-evidence.json
+          path: |
+            android-build-authority.json
+            android-physical-evidence.json
           if-no-files-found: error
           retention-days: 30
 
       - name: Summarize physical evidence
         shell: bash
         run: |
-          {
-            echo '### File QR physical Android evidence'
-            echo
-            echo 'Physical ADB device (emulators rejected): PASS'
-            echo 'CAMERA permission on installed File QR: PASS'
-            echo 'Native Scan QR control launched physical camera service: PASS'
-            echo 'Scanner cancellation returned to File QR UI: PASS'
-            echo 'Camera imagery captured by CI: NO'
-            echo 'Evidence artifact: android-physical-evidence.json'
-          } >> "$GITHUB_STEP_SUMMARY"
+          node - <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require('node:fs');
+          const authority = JSON.parse(fs.readFileSync('android-build-authority.json', 'utf8'));
+          console.log('### File QR physical Android evidence');
+          console.log();
+          console.log(`Trusted Native Builds run: ${authority.workflowRunId}`);
+          console.log(`Trusted main commit: \`${authority.commitSha}\``);
+          console.log(`Android artifact: ${authority.artifactId} / ${authority.artifactDigest}`);
+          console.log(`APK SHA-256: \`${authority.apkSha256}\``);
+          console.log('Physical ADB device (emulators rejected): PASS');
+          console.log('CAMERA permission on installed File QR: PASS');
+          console.log('Native Scan QR control launched physical camera service: PASS');
+          console.log('Scanner cancellation returned to File QR UI: PASS');
+          console.log('Camera imagery captured by CI: NO');
+          console.log('Evidence artifacts: android-build-authority.json + android-physical-evidence.json');
+          NODE
