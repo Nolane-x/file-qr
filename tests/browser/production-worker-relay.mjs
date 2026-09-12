@@ -98,16 +98,23 @@ export async function runWorkerRelayProbe({
   evidencePath = null,
   forceRelayQuery = 'forceRelay=1',
   requireProductionOrigin = true,
+  sourceCommit = '',
 } = {}) {
   if (!Number.isSafeInteger(payloadBytes) || payloadBytes < 1024 || payloadBytes > 16 * 1024 * 1024) {
     throw new Error('Worker relay evidence payload size is outside the bounded test range');
   }
   if (evidencePath) fs.rmSync(evidencePath, { force: true });
 
+  const normalizedSourceCommit = String(sourceCommit || '').trim().toLowerCase();
+  if (normalizedSourceCommit && !/^[a-f0-9]{40}$/.test(normalizedSourceCommit)) {
+    throw new Error('Worker relay evidence source commit is invalid');
+  }
+
   const base = new URL(origin);
   if (requireProductionOrigin) {
     assert.equal(base.protocol, 'https:', 'production relay evidence must use HTTPS');
     assert.equal(base.hostname, 'fileqr.nolane-file.workers.dev', 'production relay evidence must target the canonical File QR Worker');
+    assert.equal(/^[a-f0-9]{40}$/.test(normalizedSourceCommit), true, 'production relay evidence must bind one exact source commit');
   }
   const entry = new URL(`/?${forceRelayQuery}`, base.origin);
   assert.equal(entry.searchParams.get('forceRelay'), '1', 'evidence probe must explicitly force Worker relay');
@@ -151,11 +158,15 @@ export async function runWorkerRelayProbe({
     assert.equal(receive.origin, base.origin, 'receive URL must stay on the tested web origin');
     assert.equal(receive.searchParams.get('forceRelay'), '1', 'receive URL must preserve evidence-only force relay mode');
     assert.equal(receive.searchParams.has('relay'), false, 'relay secret must never be carried in the HTTP query');
-    assert.match(fragment.get('receive') || '', /^[0-9A-Z]{5}-[0-9A-Z]{5}$/);
-    assert.match(fragment.get('relay') || '', /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(/^[0-9A-Z]{5}-[0-9A-Z]{5}$/.test(fragment.get('receive') || ''), true, 'receive fragment must contain a valid code');
+    assert.equal(/^[A-Za-z0-9_-]{43}$/.test(fragment.get('relay') || ''), true, 'relay fragment must contain a valid QR secret');
 
     const downloadPromise = receiver.waitForEvent('download', { timeout: 60_000 });
-    await receiver.goto(receive.toString(), { waitUntil: 'domcontentloaded' });
+    try {
+      await receiver.goto(receive.toString(), { waitUntil: 'domcontentloaded' });
+    } catch {
+      throw new Error('Receiver navigation failed before relay evidence could start');
+    }
     await receiver.waitForFunction(
       () => /Relayed securely|secure relay/i.test(document.querySelector('[data-status]')?.textContent || '')
         || /Relayed securely/i.test(document.querySelector('[data-eta]')?.textContent || ''),
@@ -197,6 +208,7 @@ export async function runWorkerRelayProbe({
     result: 'PASS',
     testedAt: new Date().toISOString(),
     productionOrigin: base.origin,
+    sourceCommit: normalizedSourceCommit,
     transport: 'worker-relay',
     forcedRelay: true,
     payloadBytes,
@@ -217,6 +229,7 @@ if (invokedDirectly) {
     origin: process.env.FILE_QR_PRODUCTION_ORIGIN || DEFAULT_PRODUCTION_ORIGIN,
     evidencePath,
     requireProductionOrigin: true,
+    sourceCommit: process.env.FILE_QR_SOURCE_COMMIT || '',
   });
   console.log(`Worker relay evidence: ${evidence.result}; ${evidence.payloadBytes} random bytes matched by SHA-256.`);
 }
