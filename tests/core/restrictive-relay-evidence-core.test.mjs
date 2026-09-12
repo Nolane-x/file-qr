@@ -41,7 +41,20 @@ test('validator requires natural direct exhaustion before worker transport', () 
   assert.equal(proof.result, 'PASS');
   assert.equal(proof.sourceCommit, SHA);
   assert.equal(proof.attemptId, 7);
+  assert.deepEqual(proof.sequence, ['direct-started', 'direct-exhausted', 'relay-connected', 'transfer-complete']);
+
   assert.throws(() => evidence.validateRestrictiveRelayEvidence(input({ sender: journal('sender', true) })), /forced relay/i);
   assert.throws(() => evidence.validateRestrictiveRelayEvidence(input({ receivedSha256: 'c'.repeat(64) })), /SHA-256/i);
   assert.throws(() => evidence.validateRestrictiveRelayEvidence(input({ receiver: journal('receiver', false, 8) })), /attempt/i);
+  assert.throws(() => evidence.validateRestrictiveRelayEvidence(input({ productionOrigin: 'https://example.invalid' })), /canonical production origin/i);
+
+  const missingExhaustion = journal('sender');
+  missingExhaustion.events.splice(1, 1);
+  assert.throws(() => evidence.validateRestrictiveRelayEvidence(input({ sender: missingExhaustion })), /direct-exhausted/i);
+
+  const invalidJournal = journal('receiver');
+  invalidJournal.invalid = true;
+  assert.throws(() => evidence.validateRestrictiveRelayEvidence(input({ receiver: invalidJournal })), /valid enabled evidence record/i);
+
+  assert.throws(() => evidence.validateRestrictiveRelayEvidence(input({ sender: { ...journal('sender'), extra: true } })), /unknown or missing fields/i);
 });
