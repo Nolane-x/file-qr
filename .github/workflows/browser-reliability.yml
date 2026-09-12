@@ -50,6 +50,10 @@ jobs:
           FILE_QR_BROWSER_ORIGIN: http://127.0.0.1:5173
           FILE_QR_BROWSER_TEST_BYTES: '33554432'
         run: node --test tests/browser/interrupted-resume.mjs
+      - name: Prove encrypted Worker relay end to end
+        env:
+          FILE_QR_BROWSER_ORIGIN: http://127.0.0.1:5173
+        run: node --test tests/browser/worker-relay-integrity.mjs
       - name: Dump service logs on failure
         if: failure()
         shell: bash

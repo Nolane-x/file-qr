@@ -16,9 +16,9 @@ test('receiver admissions receive monotonic attempt ids', () => {
   assert.match(source, /peer-ready[\s\S]*attemptId/);
 });
 
-test('receiver websocket attachment owns its attempt and close releases only that attempt', () => {
-  assert.match(source, /serializeAttachment\(\{\s*role,\s*attemptId/);
-  assert.match(source, /webSocketClose[\s\S]*attemptId/);
+test('receiver signaling attachment owns its attempt and close releases only that attempt', () => {
+  assert.match(source, /serializeAttachment\(\{\s*kind:\s*'signal',\s*role,\s*attemptId/);
+  assert.match(source, /webSocketClose[\s\S]*kind[\s\S]*role[\s\S]*attemptId/);
   assert.match(source, /activeAttemptId[\s\S]*===\s*attemptId/);
 });
 
