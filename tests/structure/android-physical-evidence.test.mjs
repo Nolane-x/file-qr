@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 const workflowUrl = new URL('../../.github/workflows/android-physical-evidence.yml', import.meta.url);
 const collectorUrl = new URL('../../scripts/collect-android-physical-evidence.mjs', import.meta.url);
+const authorityUrl = new URL('../../scripts/prepare-android-physical-evidence.mjs', import.meta.url);
 
 test('physical Android evidence is manual-only on a dedicated self-hosted device runner', () => {
   assert.ok(fs.existsSync(workflowUrl), 'physical Android evidence workflow must exist');
@@ -18,11 +19,26 @@ test('physical Android evidence is manual-only on a dedicated self-hosted device
   assert.match(workflow, /android-physical-evidence\.json/);
 });
 
+test('self-hosted Android evidence binds to an authoritative main Native Builds run instead of a release tag', () => {
+  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+
+  assert.match(workflow, /native_run_id:/);
+  assert.doesNotMatch(workflow, /release_tag:/);
+  assert.doesNotMatch(workflow, /gh release download/);
+  assert.match(workflow, /prepare-android-physical-evidence\.mjs/);
+  assert.match(workflow, /android-build-authority\.json/);
+  assert.match(workflow, /FILE_QR_APK:\s*physical-input\/FileQR-Android-arm64\.apk/);
+});
+
 test('self-hosted Android evidence refuses non-main dispatch refs and checks out trusted main', () => {
   const workflow = fs.readFileSync(workflowUrl, 'utf8');
 
   assert.match(workflow, /if:\s*github\.ref\s*==\s*['"]refs\/heads\/main['"]/);
   assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\b[^\n]*[\s\S]*?with:\s*\n\s*ref:\s*main/);
+});
+
+test('Android physical authority preparation exists as a separate fail-closed helper', () => {
+  assert.ok(fs.existsSync(authorityUrl), 'Android physical authority helper must exist');
 });
 
 test('physical Android collector proves a non-emulator camera path without recording camera imagery', () => {
