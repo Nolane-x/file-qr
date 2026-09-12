@@ -43,14 +43,53 @@ async function slowFileReads(page) {
   });
 }
 
+function frameKind(value) {
+  return typeof value === 'string' ? 'string' : 'binary';
+}
+
 function observeRelaySockets(page) {
-  const observed = { relaySocketObserved: false };
+  const observed = {
+    relaySocketObserved: false,
+    opened: 0,
+    closed: 0,
+    sent: { string: 0, binary: 0 },
+    received: { string: 0, binary: 0 },
+  };
   page.on('websocket', (socket) => {
-    try {
-      if (new URL(socket.url()).pathname.endsWith('/relay')) observed.relaySocketObserved = true;
-    } catch { /* ignore malformed diagnostic URLs */ }
+    let relay = false;
+    try { relay = new URL(socket.url()).pathname.endsWith('/relay'); } catch { /* diagnostic only */ }
+    if (!relay) return;
+    observed.relaySocketObserved = true;
+    observed.opened += 1;
+    socket.on('framesent', (value) => { observed.sent[frameKind(value)] += 1; });
+    socket.on('framereceived', (value) => { observed.received[frameKind(value)] += 1; });
+    socket.on('close', () => { observed.closed += 1; });
   });
   return observed;
+}
+
+async function pageSnapshot(page) {
+  if (!page || page.isClosed()) return { closed: true };
+  try {
+    return await page.evaluate(() => ({
+      closed: false,
+      state: document.body?.dataset?.state || '',
+      status: document.querySelector('[data-status]')?.textContent?.trim() || '',
+      eta: document.querySelector('[data-eta]')?.textContent?.trim() || '',
+      progress: document.querySelector('[data-progress-value]')?.textContent?.trim() || '',
+    }));
+  } catch {
+    return { closed: false, state: 'snapshot-unavailable', status: '', eta: '', progress: '' };
+  }
+}
+
+async function waitForDownloadOrFailure(page, downloadPromise, timeout = 30_000) {
+  const failed = page.waitForFunction(() => document.body?.dataset?.state === 'failed', null, { timeout })
+    .then(() => ({ kind: 'failed' }))
+    .catch(() => null);
+  const downloaded = downloadPromise.then((download) => ({ kind: 'download', download })).catch(() => null);
+  const timedOut = new Promise((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), timeout));
+  return Promise.race([downloaded, failed, timedOut]);
 }
 
 export async function runWorkerRelayProbe({
@@ -81,16 +120,20 @@ export async function runWorkerRelayProbe({
   let receiverFinalState = '';
   let senderRelayObserved = false;
   let receiverRelayObserved = false;
+  let sender;
+  let receiver;
+  let senderSockets;
+  let receiverSockets;
 
   try {
     const senderContext = await browser.newContext({ userAgent: WINDOWS_CHROMIUM_UA, acceptDownloads: true });
     const receiverContext = await browser.newContext({ userAgent: WINDOWS_CHROMIUM_UA, acceptDownloads: true });
     await senderContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base.origin });
-    const sender = await senderContext.newPage();
-    const receiver = await receiverContext.newPage();
+    sender = await senderContext.newPage();
+    receiver = await receiverContext.newPage();
     await slowFileReads(sender);
-    const senderSockets = observeRelaySockets(sender);
-    const receiverSockets = observeRelaySockets(receiver);
+    senderSockets = observeRelaySockets(sender);
+    receiverSockets = observeRelaySockets(receiver);
 
     await sender.goto(entry.toString(), { waitUntil: 'domcontentloaded' });
     await sender.locator('[data-file-input]').setInputFiles({
@@ -109,7 +152,7 @@ export async function runWorkerRelayProbe({
     assert.match(receive.searchParams.get('receive') || '', /^[0-9A-Z]{5}-[0-9A-Z]{5}$/);
     assert.match(receive.searchParams.get('relay') || '', /^[A-Za-z0-9_-]{43}$/);
 
-    const downloadPromise = receiver.waitForEvent('download', { timeout: 120_000 });
+    const downloadPromise = receiver.waitForEvent('download', { timeout: 60_000 });
     await receiver.goto(receive.toString(), { waitUntil: 'domcontentloaded' });
     await receiver.waitForFunction(
       () => /Relayed securely|secure relay/i.test(document.querySelector('[data-status]')?.textContent || '')
@@ -117,8 +160,18 @@ export async function runWorkerRelayProbe({
       null,
       { timeout: 30_000 },
     );
-    const download = await downloadPromise;
-    receivedSha256 = await hashDownload(download);
+
+    const outcome = await waitForDownloadOrFailure(receiver, downloadPromise, 30_000);
+    if (outcome?.kind !== 'download') {
+      const diagnostics = {
+        sender: await pageSnapshot(sender),
+        receiver: await pageSnapshot(receiver),
+        senderRelay: senderSockets,
+        receiverRelay: receiverSockets,
+      };
+      throw new Error(`Worker relay did not complete: ${outcome?.kind || 'unknown'}; sanitized diagnostics=${JSON.stringify(diagnostics)}`);
+    }
+    receivedSha256 = await hashDownload(outcome.download);
     assert.equal(receivedSha256, sourceSha256, 'received bytes must independently match the random source payload SHA-256');
 
     await waitForState(receiver, 'done', 30_000);
