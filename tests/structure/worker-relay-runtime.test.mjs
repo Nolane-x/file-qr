@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { readWebRuntimeSource } from '../helpers/web-runtime-source.mjs';
 
 const runtime = readWebRuntimeSource();
+const runtimeUi = fs.readFileSync(new URL('../../apps/web/src/runtime-ui.js', import.meta.url), 'utf8');
 
 test('web runtime wires direct-first policy to encrypted Worker relay fallback', () => {
   assert.match(runtime, /createTransportPolicy/);
@@ -21,6 +23,14 @@ test('relay runtime keeps QR-only confidentiality boundary explicit', () => {
   assert.match(runtime, /relayCapability/);
   assert.match(runtime, /scan(?:ning)? the sender QR|scan the sender QR/i);
   assert.match(runtime, /receiveFile\([^)]*relaySecret/);
+});
+
+test('structured QR bootstrap consumes fragment authority then removes it from browser-visible URL', () => {
+  assert.match(runtimeUi, /location\.hash/);
+  assert.match(runtimeUi, /parseReceivePayloadDetails\(location\.href\)/);
+  assert.match(runtimeUi, /history\.replaceState/);
+  assert.match(runtimeUi, /location\.pathname/);
+  assert.match(runtimeUi, /location\.search/);
 });
 
 test('relay runtime reuses existing file offer resume sink and completion protocol', () => {
