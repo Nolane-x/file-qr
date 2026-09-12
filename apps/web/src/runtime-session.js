@@ -59,7 +59,9 @@ export function bindSenderSocket(socket) {
     active.socket = null;
     if (event.code === 4000 || !leaseOpen()) {
       active.leaseExpired = true;
-      cleanupLease({ keepView: true }).then(() => setState('expired')).catch(() => {});
+      if (active.attempt.channel?.readyState !== 'open') {
+        cleanupLease({ keepView: true }).then(() => setState('expired')).catch(() => {});
+      }
       return;
     }
     scheduleSenderSignalReconnect();
@@ -174,7 +176,9 @@ export async function receiveFile(rawCode, relaySecret = null) {
       latest.socket = null;
       if (event.code === 4000 || !leaseOpen()) {
         latest.leaseExpired = true;
-        cleanupLease({ keepView: true, discardPartial: true }).then(() => setState('expired')).catch(() => {});
+        if (latest.attempt.channel?.readyState !== 'open') {
+          cleanupLease({ keepView: true, discardPartial: true }).then(() => setState('expired')).catch(() => {});
+        }
       }
     });
 
